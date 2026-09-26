@@ -21,4 +21,4 @@ jobs:
           ruff check src tests --select E,F,I --ignore E501
           bash -n scripts/run_experiment.sh
       - name: Unit tests
-        run: pytest -q -m 'not slow'
+        run: python scripts/ci_pytest.py

@@ -23,7 +23,7 @@ The program reports force agreement between stored AD-3 forces and the recreated
 
 ## Setup
 
-Use Python 3.11 on Linux with an NVIDIA GPU for the main eSEN run. A CPU works for smoke tests. Install PyTorch for your CUDA version first if needed, then:
+Use Python 3.11 on Linux with an NVIDIA GPU for the main eSEN run. A CPU works for smoke tests. The eSEN adapter was verified with FAIR-Chem 2.23. Install PyTorch for your CUDA version first if needed, then:
 
 ```bash
 python -m venv .venv
@@ -68,9 +68,9 @@ For the pretrained-weight ablation, use `--backend tiny` with a matched paramete
 
 ## Metrics and interpretation
 
-Evaluation uses held-out initial states from the AD-3 **test trajectory**. `evaluate-force` first measures force RMSE against the OpenMM teacher. Trajectory evaluation compares each method with the deterministic fine-step teacher at its block endpoints and reports position and velocity path/endpoint RMSE, final absolute energy drift measured with the teacher potential, backbone evaluations, inference wall time, and speed ratio to the fine teacher. The `finite_fraction` field counts trajectories with finite coordinates, velocities, and final energy; it does **not** imply physically accurate dynamics. Nonfinite trajectories have null errors; summary RMSE uses only finite trajectories. The eSEN student algebraically fuses its linear heads when only a block endpoint is needed. Evaluation also reports an equal-forward direct transition baseline and coarse Verlet. `benchmark` separately measures batched student throughput to expose scaling with concurrent trajectories. Training and test states are never mixed. Timing is hardware and batch-size specific; it should not be read as a portable speedup.
+Evaluation uses held-out initial states from the AD-3 **test trajectory**. `evaluate-force` first measures force RMSE against the OpenMM teacher. Trajectory evaluation compares each method with the deterministic fine-step teacher at its block endpoints and reports position and velocity path/endpoint RMSE, final absolute energy drift measured with the teacher potential, backbone evaluations, inference wall time, and speed ratio to the fine teacher. The `finite_fraction` field counts trajectories with finite coordinates, velocities, and final energy; it does **not** imply physically accurate dynamics. Nonfinite trajectories have null errors; summary RMSE uses only finite trajectories. The eSEN student algebraically fuses its linear heads when only a block endpoint is needed. Evaluation also reports an equal-forward direct transition baseline and coarse Verlet. `benchmark` separately measures batched student throughput to expose scaling with concurrent trajectories. Its timer includes graph construction, backbone, heads, and integration on already-loaded device tensors, but excludes initial host-to-device transfer. Training and test states are never mixed. Timing is hardware and batch-size specific; it should not be read as a portable speedup.
 
-The CPU smoke test establishes that code runs, not that PDD improves accuracy or speed. Physical speedup needs timing on a target GPU and should include graph building, heads, teacher or baseline integration, and batch size. Long-time equilibrium sampling, free energy surfaces, and stochastic Langevin transitions are outside this first deterministic PoC.
+The CPU smoke test establishes that code runs, not that PDD improves accuracy or speed. This PoC compares a relatively expensive eSEN student against a fast classical OpenMM teacher; its wall-time ratio is a software diagnostic, not an estimate of speedup over an eSEN energy-gradient MD teacher. That next experiment needs timing on a target GPU and should include graph building, heads, integration, and batch size. Long-time equilibrium sampling, free energy surfaces, and stochastic Langevin transitions are outside this first deterministic PoC.
 
 ## Units
 

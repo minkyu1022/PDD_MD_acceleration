@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-esen = ["fairchem-core>=2.0,<3"]
+esen = ["fairchem-core>=2.23,<2.24"]
 test = ["pytest>=8"]
 
 [project.scripts]
