@@ -52,29 +52,45 @@ class AD3Trajectory:
         return self.positions[index].copy(), self.velocities[index].copy()
 
 
-def load_ad3(root: str | Path, split: str, max_frames: int | None = None) -> AD3Trajectory:
+def load_ad3(
+    root: str | Path, split: str, max_frames: int | None = None
+) -> AD3Trajectory:
     if split not in FILES:
         raise ValueError(f"Unknown AD-3 split: {split}")
     directory = Path(root) / "AD-3" / split
     npz = directory / FILES[split][0]
     pdb = directory / FILES[split][1]
     if not npz.exists() or not pdb.exists():
-        raise FileNotFoundError(f"Missing AD-3 files in {directory}; run `pdd-md download-data`")
+        raise FileNotFoundError(
+            f"Missing AD-3 files in {directory}; run `pdd-md download-data`"
+        )
     with np.load(npz) as arrays:
         sl = slice(None, max_frames)
         steps = np.asarray(arrays["step"][sl], dtype=np.int64)
         times_ps = np.asarray(arrays["time"][sl], dtype=np.float64)
-        positions = np.asarray(arrays["positions"][sl] * NM_TO_ANGSTROM, dtype=np.float32)
-        velocities = np.asarray(arrays["velocities"][sl] * NM_TO_ANGSTROM, dtype=np.float32)
-        forces = np.asarray(force_kj_mol_nm_to_ev_angstrom(arrays["forces"][sl]), dtype=np.float32)
+        positions = np.asarray(
+            arrays["positions"][sl] * NM_TO_ANGSTROM, dtype=np.float32
+        )
+        velocities = np.asarray(
+            arrays["velocities"][sl] * NM_TO_ANGSTROM, dtype=np.float32
+        )
+        forces = np.asarray(
+            force_kj_mol_nm_to_ev_angstrom(arrays["forces"][sl]), dtype=np.float32
+        )
     if positions.shape != velocities.shape or positions.shape != forces.shape:
         raise ValueError("AD-3 state array shapes disagree")
     if positions.ndim != 3 or positions.shape[-1] != 3:
         raise ValueError("Expected [frame, atom, xyz] arrays")
     if len(steps) > 1 and not np.all(np.isin(np.diff(steps), [1, 9, 90, 900])):
         raise ValueError("Unexpected AD-3 hierarchical frame spacing")
-    dt_ps = float(np.median(np.diff(times_ps) / np.diff(steps))) if len(steps) > 1 else 0.001
-    if len(steps) > 1 and not np.allclose(np.diff(times_ps), np.diff(steps) * dt_ps, rtol=1e-5, atol=1e-6):
+    dt_ps = (
+        float(np.median(np.diff(times_ps) / np.diff(steps)))
+        if len(steps) > 1
+        else 0.001
+    )
+    if len(steps) > 1 and not np.allclose(
+        np.diff(times_ps), np.diff(steps) * dt_ps, rtol=1e-5, atol=1e-6
+    ):
         raise ValueError("AD-3 step and time arrays disagree")
     if not all(np.isfinite(a).all() for a in (positions, velocities, forces)):
         raise ValueError("AD-3 contains non-finite states")
@@ -82,11 +98,13 @@ def load_ad3(root: str | Path, split: str, max_frames: int | None = None) -> AD3
 
 
 def pdb_atomic_numbers_and_masses(pdb_path: str | Path):
-    from openmm.app import PDBFile
     from openmm import unit
+    from openmm.app import PDBFile
 
     pdb = PDBFile(str(pdb_path))
     atoms = list(pdb.topology.atoms())
     numbers = np.asarray([a.element.atomic_number for a in atoms], dtype=np.int64)
-    masses = np.asarray([a.element.mass.value_in_unit(unit.dalton) for a in atoms], dtype=np.float64)
+    masses = np.asarray(
+        [a.element.mass.value_in_unit(unit.dalton) for a in atoms], dtype=np.float64
+    )
     return numbers, masses

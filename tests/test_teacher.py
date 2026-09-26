@@ -1,11 +1,10 @@
 from pathlib import Path
 
 import numpy as np
-from openmm.app import PDBFile
 from openmm import unit
+from openmm.app import PDBFile
 
 from pdd_md.teacher import OpenMMTeacher, PhaseState
-
 
 PDB = Path(__file__).parent / "fixtures" / "ad3-state0.pdb"
 
@@ -37,4 +36,3 @@ def test_teacher_mean_velocity_matches_step():
     next_state = teacher.step(initial, dt)
     assert np.allclose(next_state.q, initial.q + dt * qdot)
     assert np.allclose(next_state.v, initial.v + dt * accel)
-

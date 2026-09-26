@@ -25,7 +25,9 @@ def _tensor(a, device):
 
 
 def _batch_states(trajectory, indices, device):
-    return _tensor(trajectory.positions[indices], device), _tensor(trajectory.velocities[indices], device)
+    return _tensor(trajectory.positions[indices], device), _tensor(
+        trajectory.velocities[indices], device
+    )
 
 
 def _sample_indices(rng, nframes: int, batch_size: int):
@@ -35,12 +37,38 @@ def _sample_indices(rng, nframes: int, batch_size: int):
 def _save(path, payload):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(payload, path)
+    temporary = path.with_suffix(path.suffix + ".part")
+    torch.save(payload, temporary)
+    temporary.replace(path)
 
 
 def _load(path):
     # Checkpoints here are produced locally and include metadata dictionaries.
     return torch.load(path, map_location="cpu", weights_only=False)
+
+
+def _restore_optimizer(optimizer, saved, device):
+    optimizer.load_state_dict(saved["optimizer"])
+    for state in optimizer.state.values():
+        for key, value in state.items():
+            if isinstance(value, torch.Tensor):
+                state[key] = value.to(device)
+
+
+def _resume_training(resume, kind, model, optimizer, rng, device, expected=None):
+    if resume is None:
+        return 1, []
+    saved = _load(resume)
+    if saved["kind"] != kind:
+        raise ValueError(f"Cannot resume {kind} from {saved['kind']} checkpoint")
+    for key, value in (expected or {}).items():
+        if saved[key] != value:
+            raise ValueError(f"Resume mismatch for {key}: {saved[key]} != {value}")
+    key = "adapter" if kind == "force" else "student"
+    model.load_state_dict(saved[key])
+    _restore_optimizer(optimizer, saved, device)
+    rng.bit_generator.state = saved["rng_state"]
+    return int(saved["iteration"]) + 1, list(saved["history"])
 
 
 def _topology(trajectory):
@@ -59,7 +87,11 @@ def validate_teacher(trajectory, teacher, count=8, seed=0):
         predicted = teacher.force(trajectory.positions[index])
         errors.append(np.mean(np.abs(predicted - target)))
         norms.append(np.sqrt(np.mean(target**2)))
-    return {"force_mae_ev_a": float(np.mean(errors)), "reference_force_rms_ev_a": float(np.mean(norms)), "sampled_frames": len(picks)}
+    return {
+        "force_mae_ev_a": float(np.mean(errors)),
+        "reference_force_rms_ev_a": float(np.mean(norms)),
+        "sampled_frames": len(picks),
+    }
 
 
 def train_force(
@@ -77,6 +109,8 @@ def train_force(
     seed: int = 7,
     hidden: int = 32,
     log_every: int = 50,
+    save_every: int = 500,
+    resume: str | None = None,
 ):
     if label_source not in {"teacher", "ad3"}:
         raise ValueError("label_source must be teacher or ad3")
@@ -88,10 +122,43 @@ def train_force(
     print("teacher_consistency", json.dumps(consistency), flush=True)
     adapter = make_adapter(backend, atomic_numbers, checkpoint, hidden).to(device)
     adapter.train()
-    optimizer = torch.optim.AdamW(adapter.parameters(), lr=learning_rate, weight_decay=1e-6)
+    optimizer = torch.optim.AdamW(
+        adapter.parameters(), lr=learning_rate, weight_decay=1e-6
+    )
     rng = np.random.default_rng(seed)
-    history = []
-    for iteration in range(1, steps + 1):
+    start_step, history = _resume_training(
+        resume,
+        "force",
+        adapter,
+        optimizer,
+        rng,
+        device,
+        {
+            "backend": backend,
+            "atomic_numbers": atomic_numbers,
+            "label_source": label_source,
+        },
+    )
+
+    def snapshot(iteration):
+        return {
+            "kind": "force",
+            "backend": backend,
+            "checkpoint": checkpoint,
+            "hidden": hidden,
+            "atomic_numbers": atomic_numbers,
+            "masses_dalton": masses.tolist(),
+            "adapter": adapter.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "rng_state": rng.bit_generator.state,
+            "iteration": iteration,
+            "label_source": label_source,
+            "teacher_consistency": consistency,
+            "history": history,
+            "seed": seed,
+        }
+
+    for iteration in range(start_step, steps + 1):
         indices = _sample_indices(rng, len(trajectory), batch_size)
         q, _ = _batch_states(trajectory, indices, device)
         if label_source == "teacher":
@@ -106,22 +173,15 @@ def train_force(
         torch.nn.utils.clip_grad_norm_(adapter.parameters(), 10.0)
         optimizer.step()
         if iteration == 1 or iteration % log_every == 0 or iteration == steps:
-            record = {"iteration": iteration, "force_rmse_ev_a": float(loss.sqrt().detach().cpu())}
+            record = {
+                "iteration": iteration,
+                "force_rmse_ev_a": float(loss.sqrt().detach().cpu()),
+            }
             history.append(record)
             print(json.dumps(record), flush=True)
-    payload = {
-        "kind": "force",
-        "backend": backend,
-        "checkpoint": checkpoint,
-        "hidden": hidden,
-        "atomic_numbers": atomic_numbers,
-        "masses_dalton": masses.tolist(),
-        "adapter": adapter.cpu().state_dict(),
-        "label_source": label_source,
-        "teacher_consistency": consistency,
-        "history": history,
-        "seed": seed,
-    }
+        if save_every and iteration % save_every == 0:
+            _save(output, snapshot(iteration))
+    payload = snapshot(max(steps, start_step - 1))
     _save(output, payload)
     return payload
 
@@ -130,15 +190,22 @@ def _student_from_force(force_checkpoint, max_block, dt_ps, device):
     warm = _load(force_checkpoint)
     if warm["kind"] != "force":
         raise ValueError("Expected a force warm-start checkpoint")
-    adapter = make_adapter(warm["backend"], warm["atomic_numbers"], warm["checkpoint"], warm["hidden"])
+    adapter = make_adapter(
+        warm["backend"], warm["atomic_numbers"], warm["checkpoint"], warm["hidden"]
+    )
     adapter.load_state_dict(warm["adapter"])
-    student = ParallelStudent(adapter, warm["masses_dalton"], max_block, dt_ps).to(device)
+    student = ParallelStudent(adapter, warm["masses_dalton"], max_block, dt_ps).to(
+        device
+    )
     return student, warm
 
 
 def _teacher_mean_batch(teacher, q, v, dt_ps):
     q_np, v_np = q.detach().cpu().numpy(), v.detach().cpu().numpy()
-    means = [teacher.mean_velocity(PhaseState(q_np[i], v_np[i]), dt_ps) for i in range(len(q_np))]
+    means = [
+        teacher.mean_velocity(PhaseState(q_np[i], v_np[i]), dt_ps)
+        for i in range(len(q_np))
+    ]
     qdot = np.stack([pair[0] for pair in means])
     accel = np.stack([pair[1] for pair in means])
     return _tensor(qdot, q.device), _tensor(accel, q.device)
@@ -157,7 +224,9 @@ def _teacher_coarse_mean_batch(teacher, q, v, fine_dt_ps, fine_steps):
 
 
 def _scaled_loss(qdot, accel, target_qdot, target_accel, velocity_scale, accel_scale):
-    return (((qdot - target_qdot) / velocity_scale) ** 2).mean() + (((accel - target_accel) / accel_scale) ** 2).mean()
+    return (((qdot - target_qdot) / velocity_scale) ** 2).mean() + (
+        ((accel - target_accel) / accel_scale) ** 2
+    ).mean()
 
 
 def train_pdd(
@@ -178,6 +247,8 @@ def train_pdd(
     device: str = "cpu",
     seed: int = 7,
     log_every: int = 50,
+    save_every: int = 500,
+    resume: str | None = None,
 ):
     set_seed(seed)
     trajectory = load_ad3(data_root, "train", max_frames)
@@ -191,10 +262,44 @@ def train_pdd(
     if list(warm["atomic_numbers"]) != _topology(trajectory)[0]:
         raise ValueError("Warm-start checkpoint and AD-3 topology differ")
     student.train()
-    optimizer = torch.optim.AdamW(student.parameters(), lr=learning_rate, weight_decay=1e-6)
+    optimizer = torch.optim.AdamW(
+        student.parameters(), lr=learning_rate, weight_decay=1e-6
+    )
     rng = np.random.default_rng(seed)
-    history = []
-    for iteration in range(1, steps + 1):
+    start_step, history = _resume_training(
+        resume,
+        "pdd",
+        student,
+        optimizer,
+        rng,
+        device,
+        {"max_block": max_block, "dt_ps": dt_ps, "block_sizes": list(block_sizes)},
+    )
+
+    def snapshot(iteration):
+        return {
+            "kind": "pdd",
+            "backend": warm["backend"],
+            "checkpoint": warm["checkpoint"],
+            "hidden": warm["hidden"],
+            "atomic_numbers": warm["atomic_numbers"],
+            "masses_dalton": warm["masses_dalton"],
+            "student": student.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "rng_state": rng.bit_generator.state,
+            "iteration": iteration,
+            "max_block": max_block,
+            "dt_ps": dt_ps,
+            "block_sizes": list(block_sizes),
+            "prefix_blocks": prefix_blocks,
+            "velocity_scale": velocity_scale,
+            "accel_scale": accel_scale,
+            "force_checkpoint": str(force_checkpoint),
+            "history": history,
+            "seed": seed,
+        }
+
+    for iteration in range(start_step, steps + 1):
         indices = _sample_indices(rng, len(trajectory), batch_size)
         q, v = _batch_states(trajectory, indices, device)
         block = int(rng.choice(block_sizes))
@@ -209,25 +314,33 @@ def train_pdd(
         offsets = rng.integers(0, block, size=batch_size)
         rows = torch.arange(batch_size, device=device)
         selected = torch.as_tensor(offsets, dtype=torch.long, device=device)
-        target_qdot, target_accel = _teacher_mean_batch(teacher, qs[rows, selected], vs[rows, selected], dt_ps)
-        loss = _scaled_loss(qdots[rows, selected], accels[rows, selected], target_qdot, target_accel, velocity_scale, accel_scale)
+        target_qdot, target_accel = _teacher_mean_batch(
+            teacher, qs[rows, selected], vs[rows, selected], dt_ps
+        )
+        loss = _scaled_loss(
+            qdots[rows, selected],
+            accels[rows, selected],
+            target_qdot,
+            target_accel,
+            velocity_scale,
+            accel_scale,
+        )
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(student.parameters(), 10.0)
         optimizer.step()
         if iteration == 1 or iteration % log_every == 0 or iteration == steps:
-            record = {"iteration": iteration, "block": block, "loss": float(loss.detach().cpu()), "teacher_force_calls": teacher.force_calls}
+            record = {
+                "iteration": iteration,
+                "block": block,
+                "loss": float(loss.detach().cpu()),
+                "teacher_force_calls": teacher.force_calls,
+            }
             history.append(record)
             print(json.dumps(record), flush=True)
-    payload = {
-        "kind": "pdd",
-        "backend": warm["backend"], "checkpoint": warm["checkpoint"], "hidden": warm["hidden"],
-        "atomic_numbers": warm["atomic_numbers"], "masses_dalton": warm["masses_dalton"],
-        "student": student.cpu().state_dict(), "max_block": max_block, "dt_ps": dt_ps,
-        "block_sizes": list(block_sizes), "prefix_blocks": prefix_blocks,
-        "velocity_scale": velocity_scale, "accel_scale": accel_scale,
-        "force_checkpoint": str(force_checkpoint), "history": history, "seed": seed,
-    }
+        if save_every and iteration % save_every == 0:
+            _save(output, snapshot(iteration))
+    payload = snapshot(max(steps, start_step - 1))
     _save(output, payload)
     return payload
 
@@ -248,38 +361,81 @@ def train_direct(
     device: str = "cpu",
     seed: int = 7,
     log_every: int = 50,
+    save_every: int = 500,
+    resume: str | None = None,
 ):
     """Equal-backbone one-forward coarse transition comparison model."""
     set_seed(seed)
     trajectory = load_ad3(data_root, "train", max_frames)
     fine_dt = dt_ps
     teacher = OpenMMTeacher(trajectory.pdb_path, platform)
-    student, warm = _student_from_force(force_checkpoint, 1, fine_dt * coarse_factor, device)
+    student, warm = _student_from_force(
+        force_checkpoint, 1, fine_dt * coarse_factor, device
+    )
     student.train()
-    optimizer = torch.optim.AdamW(student.parameters(), lr=learning_rate, weight_decay=1e-6)
+    optimizer = torch.optim.AdamW(
+        student.parameters(), lr=learning_rate, weight_decay=1e-6
+    )
     rng = np.random.default_rng(seed)
-    history = []
-    for iteration in range(1, steps + 1):
+    start_step, history = _resume_training(
+        resume,
+        "direct",
+        student,
+        optimizer,
+        rng,
+        device,
+        {"coarse_factor": coarse_factor, "dt_ps": fine_dt * coarse_factor},
+    )
+
+    def snapshot(iteration):
+        return {
+            "kind": "direct",
+            "backend": warm["backend"],
+            "checkpoint": warm["checkpoint"],
+            "hidden": warm["hidden"],
+            "atomic_numbers": warm["atomic_numbers"],
+            "masses_dalton": warm["masses_dalton"],
+            "student": student.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "rng_state": rng.bit_generator.state,
+            "iteration": iteration,
+            "max_block": 1,
+            "dt_ps": fine_dt * coarse_factor,
+            "coarse_factor": coarse_factor,
+            "history": history,
+            "seed": seed,
+        }
+
+    for iteration in range(start_step, steps + 1):
         indices = _sample_indices(rng, len(trajectory), batch_size)
         q, v = _batch_states(trajectory, indices, device)
-        target_qdot, target_accel = _teacher_coarse_mean_batch(teacher, q, v, fine_dt, coarse_factor)
+        target_qdot, target_accel = _teacher_coarse_mean_batch(
+            teacher, q, v, fine_dt, coarse_factor
+        )
         qdots, accels = student(q, v, 1)
-        loss = _scaled_loss(qdots[:, 0], accels[:, 0], target_qdot, target_accel, velocity_scale, accel_scale)
+        loss = _scaled_loss(
+            qdots[:, 0],
+            accels[:, 0],
+            target_qdot,
+            target_accel,
+            velocity_scale,
+            accel_scale,
+        )
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(student.parameters(), 10.0)
         optimizer.step()
         if iteration == 1 or iteration % log_every == 0 or iteration == steps:
-            record = {"iteration": iteration, "loss": float(loss.detach().cpu()), "teacher_force_calls": teacher.force_calls}
+            record = {
+                "iteration": iteration,
+                "loss": float(loss.detach().cpu()),
+                "teacher_force_calls": teacher.force_calls,
+            }
             history.append(record)
             print(json.dumps(record), flush=True)
-    payload = {
-        "kind": "direct", "backend": warm["backend"], "checkpoint": warm["checkpoint"],
-        "hidden": warm["hidden"], "atomic_numbers": warm["atomic_numbers"],
-        "masses_dalton": warm["masses_dalton"], "student": student.cpu().state_dict(),
-        "max_block": 1, "dt_ps": fine_dt * coarse_factor, "coarse_factor": coarse_factor,
-        "history": history, "seed": seed,
-    }
+        if save_every and iteration % save_every == 0:
+            _save(output, snapshot(iteration))
+    payload = snapshot(max(steps, start_step - 1))
     _save(output, payload)
     return payload
 
@@ -288,7 +444,11 @@ def load_student(checkpoint_path: str, device="cpu"):
     saved = _load(checkpoint_path)
     if saved["kind"] not in {"pdd", "direct"}:
         raise ValueError("Expected PDD or direct transition checkpoint")
-    adapter = make_adapter(saved["backend"], saved["atomic_numbers"], saved["checkpoint"], saved["hidden"])
-    student = ParallelStudent(adapter, saved["masses_dalton"], saved["max_block"], saved["dt_ps"])
+    adapter = make_adapter(
+        saved["backend"], saved["atomic_numbers"], saved["checkpoint"], saved["hidden"]
+    )
+    student = ParallelStudent(
+        adapter, saved["masses_dalton"], saved["max_block"], saved["dt_ps"]
+    )
     student.load_state_dict(saved["student"])
     return student.to(device).eval(), saved

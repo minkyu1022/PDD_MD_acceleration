@@ -21,4 +21,3 @@ def force_ev_angstrom_to_kj_mol_nm(force):
 
 def force_to_acceleration(force_ev_angstrom, masses_dalton):
     return force_ev_angstrom * (ACCEL_PER_FORCE_PER_DALTON / masses_dalton[..., None])
-

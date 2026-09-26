@@ -14,9 +14,13 @@ from .train import train_direct, train_force, train_pdd, validate_teacher
 def build_parser():
     parser = argparse.ArgumentParser(prog="pdd-md")
     commands = parser.add_subparsers(dest="command", required=True)
-    download = commands.add_parser("download-data", help="Fetch public Timewarp AD-3 train and test files")
+    download = commands.add_parser(
+        "download-data", help="Fetch public Timewarp AD-3 train and test files"
+    )
     download.add_argument("--data-root", default="data")
-    inspect = commands.add_parser("inspect-data", help="Inspect actual time grid and teacher force agreement")
+    inspect = commands.add_parser(
+        "inspect-data", help="Inspect actual time grid and teacher force agreement"
+    )
     inspect.add_argument("--data-root", default="data")
     inspect.add_argument("--split", choices=["train", "test"], default="train")
     inspect.add_argument("--platform", default="CPU")
@@ -24,14 +28,26 @@ def build_parser():
         command = commands.add_parser(name)
         command.add_argument("--data-root", default="data")
         command.add_argument("--output", required=True)
-        command.add_argument("--steps", type=int, default=1000 if name == "train-force" else 2000)
-        command.add_argument("--batch-size", type=int, default=8 if name == "train-force" else 4)
-        command.add_argument("--learning-rate", type=float, default=1e-4 if name == "train-force" else 2e-5)
+        command.add_argument(
+            "--steps", type=int, default=1000 if name == "train-force" else 2000
+        )
+        command.add_argument(
+            "--batch-size", type=int, default=8 if name == "train-force" else 4
+        )
+        command.add_argument(
+            "--learning-rate",
+            type=float,
+            default=1e-4 if name == "train-force" else 2e-5,
+        )
         command.add_argument("--max-frames", type=int)
         command.add_argument("--device", default="cpu")
         command.add_argument("--platform", default="CPU")
         command.add_argument("--seed", type=int, default=7)
         command.add_argument("--log-every", type=int, default=50)
+        command.add_argument("--save-every", type=int, default=500)
+        command.add_argument(
+            "--resume", help="Continue training from a saved checkpoint"
+        )
     force = commands.choices["train-force"]
     force.add_argument("--backend", choices=["esen", "tiny"], default="esen")
     force.add_argument("--checkpoint", default="esen-sm-direct-all-omol")
@@ -76,9 +92,14 @@ def main(argv=None):
         trajectory = load_ad3(kw["data_root"], kw["split"])
         teacher = OpenMMTeacher(trajectory.pdb_path, kw["platform"])
         result = {
-            "split": kw["split"], "frames": len(trajectory), "atoms": trajectory.positions.shape[1],
-            "first_steps": trajectory.steps[:8].tolist(), "dt_ps_per_md_step": trajectory.dt_ps,
-            "unique_saved_step_gaps": sorted(set(int(x) for x in trajectory.steps[1:100] - trajectory.steps[:99])),
+            "split": kw["split"],
+            "frames": len(trajectory),
+            "atoms": trajectory.positions.shape[1],
+            "first_steps": trajectory.steps[:8].tolist(),
+            "dt_ps_per_md_step": trajectory.dt_ps,
+            "unique_saved_step_gaps": sorted(
+                set(int(x) for x in trajectory.steps[1:100] - trajectory.steps[:99])
+            ),
             "teacher_agreement": validate_teacher(trajectory, teacher),
         }
         print(json.dumps(result, indent=2))

@@ -37,7 +37,9 @@ class OpenMMTeacher:
         modeller = app.Modeller(pdb.topology, pdb.positions)
         modeller.addExtraParticles(forcefield)
         if len(list(modeller.topology.atoms())) != len(list(pdb.topology.atoms())):
-            raise ValueError("Force field added virtual sites; AD-3 state atom count would change")
+            raise ValueError(
+                "Force field added virtual sites; AD-3 state atom count would change"
+            )
         system = forcefield.createSystem(
             modeller.topology,
             nonbondedMethod=app.CutoffNonPeriodic,
@@ -45,7 +47,10 @@ class OpenMMTeacher:
             constraints=None,
         )
         self.masses = np.asarray(
-            [system.getParticleMass(i).value_in_unit(unit.dalton) for i in range(system.getNumParticles())],
+            [
+                system.getParticleMass(i).value_in_unit(unit.dalton)
+                for i in range(system.getNumParticles())
+            ],
             dtype=np.float64,
         )
         self.natoms = len(self.masses)
@@ -53,7 +58,9 @@ class OpenMMTeacher:
             raise ValueError("Nonpositive mass in AD-3 OpenMM system")
         self.system = system
         self.integrator = mm.VerletIntegrator(0.0005 * unit.picoseconds)
-        self.context = mm.Context(system, self.integrator, mm.Platform.getPlatformByName(platform))
+        self.context = mm.Context(
+            system, self.integrator, mm.Platform.getPlatformByName(platform)
+        )
         self.unit = unit
         self.force_calls = 0
 
@@ -63,16 +70,24 @@ class OpenMMTeacher:
             raise ValueError(f"Expected positions [{self.natoms},3], got {q.shape}")
         self.context.setPositions(q / NM_TO_ANGSTROM * self.unit.nanometer)
         state = self.context.getState(getForces=True, getEnergy=True)
-        force = state.getForces(asNumpy=True).value_in_unit(self.unit.kilojoule_per_mole / self.unit.nanometer)
-        potential = state.getPotentialEnergy().value_in_unit(self.unit.kilojoule_per_mole)
+        force = state.getForces(asNumpy=True).value_in_unit(
+            self.unit.kilojoule_per_mole / self.unit.nanometer
+        )
+        potential = state.getPotentialEnergy().value_in_unit(
+            self.unit.kilojoule_per_mole
+        )
         self.force_calls += 1
-        return np.asarray(force_kj_mol_nm_to_ev_angstrom(force), dtype=np.float64), float(potential)
+        return np.asarray(
+            force_kj_mol_nm_to_ev_angstrom(force), dtype=np.float64
+        ), float(potential)
 
     def force(self, q_angstrom: np.ndarray):
         return self.force_and_potential(q_angstrom)[0]
 
     def acceleration(self, q_angstrom: np.ndarray):
-        return self.force(q_angstrom) * (ACCEL_PER_FORCE_PER_DALTON / self.masses[:, None])
+        return self.force(q_angstrom) * (
+            ACCEL_PER_FORCE_PER_DALTON / self.masses[:, None]
+        )
 
     def step(self, state: PhaseState, dt_ps: float) -> PhaseState:
         """Velocity Verlet step. All teacher targets use this same map."""
@@ -92,7 +107,12 @@ class OpenMMTeacher:
         return (next_state.q - state.q) / dt_ps, (next_state.v - state.v) / dt_ps
 
     def rollout(self, state: PhaseState, steps: int, dt_ps: float):
-        states = [PhaseState(np.asarray(state.q, dtype=np.float64).copy(), np.asarray(state.v, dtype=np.float64).copy())]
+        states = [
+            PhaseState(
+                np.asarray(state.q, dtype=np.float64).copy(),
+                np.asarray(state.v, dtype=np.float64).copy(),
+            )
+        ]
         for _ in range(steps):
             states.append(self.step(states[-1], dt_ps))
         return states
@@ -106,4 +126,3 @@ class OpenMMTeacher:
     def close(self):
         del self.context
         del self.integrator
-

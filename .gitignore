@@ -1,5 +1,7 @@
 .venv/
 .uv-cache/
+.hf-cache/
+*.egg-info/
 __pycache__/
 .pytest_cache/
 *.pyc
@@ -8,4 +10,3 @@ runs/
 *.pt
 *.npz
 .DS_Store
-

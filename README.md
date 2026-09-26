@@ -35,6 +35,8 @@ pdd-md inspect-data --data-root data --split train
 
 The [eSEN checkpoint](https://huggingface.co/facebook/OMol25) is gated by its model license. Accept access on that page and log in with `hf auth login`; no token is stored in this repository. The default eSEN model ID is `esen-sm-direct-all-omol`. A local checkpoint path can also be supplied with `--checkpoint`.
 
+Training writes an atomic checkpoint at `--output` every 500 updates by default and on completion. Pass `--resume runs/esen/pdd.pt` together with a larger `--steps` value to continue an interrupted run with optimizer and sampling RNG restored. Checkpoints and data stay outside Git.
+
 ## Small local smoke test
 
 These commands exercise the complete pipeline without a gated checkpoint. The few training steps are only a software check; their metrics are not scientifically meaningful.
@@ -76,4 +78,3 @@ The CPU smoke test establishes that code runs, not that PDD improves accuracy or
 | Mass | dalton | PDB/OpenMM | — |
 
 Conversions and the force-to-acceleration factor are in `src/pdd_md/units.py`. Dataset files, checkpoint weights, and run outputs are ignored by Git.
-
