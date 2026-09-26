@@ -31,6 +31,10 @@ pdd-md train-direct --data-root "$DATA_ROOT" \
   --device "$DEVICE" --platform "$PLATFORM"
 pdd-md evaluate --data-root "$DATA_ROOT" \
   --pdd-checkpoint "$RUN_ROOT/pdd.pt" --direct-checkpoint "$RUN_ROOT/direct_L8.pt" \
+  --output "$RUN_ROOT/eval_12fs.json" --blocks 1 2 4 8 \
+  --fine-steps 24 --samples "$SAMPLES" --device "$DEVICE" --platform "$PLATFORM"
+pdd-md evaluate --data-root "$DATA_ROOT" \
+  --pdd-checkpoint "$RUN_ROOT/pdd.pt" --direct-checkpoint "$RUN_ROOT/direct_L8.pt" \
   --output "$RUN_ROOT/eval_40fs.json" --blocks 1 2 4 8 \
   --fine-steps 80 --samples "$SAMPLES" --device "$DEVICE" --platform "$PLATFORM"
 pdd-md benchmark --data-root "$DATA_ROOT" --pdd-checkpoint "$RUN_ROOT/pdd.pt" \

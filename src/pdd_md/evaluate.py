@@ -333,6 +333,7 @@ def evaluate(
             start = time.perf_counter()
             coarse = _coarse_verlet_rollout(teacher, initial, fine_steps, block, dt_ps)
             coarse_seconds = time.perf_counter() - start
+            coarse_force_calls = teacher.force_calls - force_calls_before
             metrics = _metrics_or_failure(
                 coarse, reference, teacher, start_energy, stride=block
             )
@@ -340,7 +341,7 @@ def evaluate(
                 {
                     "method": f"teacher_coarse_verlet_L{block}",
                     "initial_index": int(index),
-                    "force_evaluations": teacher.force_calls - force_calls_before,
+                    "force_evaluations": coarse_force_calls,
                     "wall_seconds": coarse_seconds,
                     "speedup_vs_fine_teacher": (
                         reference_seconds / coarse_seconds

@@ -4,6 +4,7 @@
 *.egg-info/
 __pycache__/
 .pytest_cache/
+pytest.xml
 *.pyc
 data/
 runs/
