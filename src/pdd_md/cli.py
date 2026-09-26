@@ -98,7 +98,7 @@ def main(argv=None):
             "first_steps": trajectory.steps[:8].tolist(),
             "dt_ps_per_md_step": trajectory.dt_ps,
             "unique_saved_step_gaps": sorted(
-                set(int(x) for x in trajectory.steps[1:100] - trajectory.steps[:99])
+                {int(x) for x in trajectory.steps[1:100] - trajectory.steps[:99]}
             ),
             "teacher_agreement": validate_teacher(trajectory, teacher),
         }

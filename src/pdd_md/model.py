@@ -8,6 +8,7 @@ from pathlib import Path
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 from .units import ACCEL_PER_FORCE_PER_DALTON
 
@@ -312,3 +313,50 @@ class ParallelStudent(nn.Module):
     def advance(self, q, v, block: int):
         qdots, accels = self(q, v, block)
         return q + self.dt_ps * qdots.sum(dim=1), v + self.dt_ps * accels.sum(dim=1)
+
+    def advance_fused(self, q, v, block: int):
+        """Fuse eSEN's linear force heads for endpoint-only inference.
+
+        Returns the same block endpoint as `advance` up to rounding. The
+        backbone is evaluated once; force heads reduce to two weighted vector
+        projections, and residual heads to two summed linear maps.
+        """
+        if not isinstance(self.adapter, ESENAdapter):
+            return self.advance(q, v, block)
+        if not 1 <= block <= self.max_block:
+            raise ValueError("block exceeds max_block")
+        encoded = self.adapter.encode(q)
+        node = encoded.embedding["node_embedding"][:, 1:4, :]
+        weights = torch.stack(
+            [head.linear.weight[1, 0, :] for head in self.force_heads[:block]]
+        )
+        kweight = torch.arange(block, device=q.device, dtype=q.dtype) + 0.5
+        raw_force_sum = torch.einsum("nci,i->nc", node, weights.sum(dim=0))
+        raw_force_weighted = torch.einsum(
+            "nci,i->nc", node, (weights * kweight[:, None]).sum(dim=0)
+        )
+        norm = self.adapter.force_normalizer
+        force_sum = (raw_force_sum * norm.rmsd + block * norm.mean).reshape_as(q)
+        force_weighted = (
+            raw_force_weighted * norm.rmsd + kweight.sum() * norm.mean
+        ).reshape_as(q)
+        factor = ACCEL_PER_FORCE_PER_DALTON / self.masses[None, :, None]
+        bases = self._vector_bases(q, v)
+        scalar_input = torch.cat(
+            [encoded.scalars, (v**2).sum(dim=-1, keepdim=True) / 100.0], dim=-1
+        )
+        qweights = torch.stack([head.weight for head in self.qdot_heads[:block]]).sum(0)
+        qbiases = torch.stack([head.bias for head in self.qdot_heads[:block]]).sum(0)
+        aweights = torch.stack([head.weight for head in self.accel_heads[:block]]).sum(
+            0
+        )
+        abiases = torch.stack([head.bias for head in self.accel_heads[:block]]).sum(0)
+        qres = torch.einsum(
+            "baf,bafc->bac", F.linear(scalar_input, qweights, qbiases), bases
+        )
+        ares = torch.einsum(
+            "baf,bafc->bac", F.linear(scalar_input, aweights, abiases), bases
+        )
+        total_qdot = block * v + self.dt_ps * factor * force_weighted + qres
+        total_accel = factor * force_sum + 100.0 * ares
+        return q + self.dt_ps * total_qdot, v + self.dt_ps * total_accel

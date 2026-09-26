@@ -307,7 +307,7 @@ def train_pdd(
             prefix = int(rng.integers(0, prefix_blocks + 1))
             with torch.no_grad():
                 for _ in range(prefix):
-                    q, v = student.advance(q, v, block)
+                    q, v = student.advance_fused(q, v, block)
             q, v = q.detach(), v.detach()
         qdots, accels = student(q, v, block)
         qs, vs = student.states_in_block(q, v, qdots, accels)

@@ -19,23 +19,21 @@ def _student_rollout(
 ):
     q = torch.tensor(initial.q[None], dtype=torch.float32, device=device)
     v = torch.tensor(initial.v[None], dtype=torch.float32, device=device)
-    q_history, v_history = [], []
+    q_history, v_history = [q], [v]
     if device == "cuda":
         torch.cuda.synchronize()
     start = time.perf_counter()
     with torch.no_grad():
         for _ in range(total_steps // block):
-            qdots, accels = student(q, v, block)
-            qs, vs = student.states_in_block(q, v, qdots, accels)
-            q_history.append(qs[:, 1:].detach())
-            v_history.append(vs[:, 1:].detach())
-            q, v = qs[:, -1], vs[:, -1]
+            q, v = student.advance_fused(q, v, block)
+            q_history.append(q)
+            v_history.append(v)
     if device == "cuda":
         torch.cuda.synchronize()
     elapsed = time.perf_counter() - start
-    all_q = torch.cat(q_history, dim=1)[0].cpu().numpy().astype(np.float64)
-    all_v = torch.cat(v_history, dim=1)[0].cpu().numpy().astype(np.float64)
-    states = [initial] + [PhaseState(qi, vi) for qi, vi in zip(all_q, all_v)]
+    all_q = torch.cat(q_history, dim=0).cpu().numpy().astype(np.float64)
+    all_v = torch.cat(v_history, dim=0).cpu().numpy().astype(np.float64)
+    states = [PhaseState(qi, vi) for qi, vi in zip(all_q, all_v)]
     return states, elapsed
 
 
@@ -109,37 +107,47 @@ def evaluate(
         "fine_steps": fine_steps,
         "dt_ps": dt_ps,
         "ad3_saved_step_dt_ps": trajectory.dt_ps,
+        "path_sampling": "block_endpoints",
         "teacher_consistency": validate_teacher(trajectory, teacher),
+        "fine_teacher_wall_seconds": [],
         "results": [],
     }
     for index in indices:
         initial = PhaseState(*trajectory.state(int(index)))
         start_energy = teacher.total_energy(initial)
+        start = time.perf_counter()
         reference = teacher.rollout(initial, fine_steps, dt_ps)
+        reference_seconds = time.perf_counter() - start
+        report["fine_teacher_wall_seconds"].append(reference_seconds)
         for block in block_sizes:
             states, seconds = _student_rollout(
                 student, initial, fine_steps, block, device
             )
-            metrics = _compare(states, reference)
+            metrics = _compare(states, reference, stride=block)
             metrics.update(
                 {
                     "method": f"pdd_L{block}",
                     "initial_index": int(index),
                     "backbone_evaluations": fine_steps // block,
                     "wall_seconds": seconds,
+                    "speedup_vs_fine_teacher": reference_seconds / seconds,
                     "absolute_energy_drift_kj_mol": float(
                         abs(teacher.total_energy(states[-1]) - start_energy)
                     ),
                 }
             )
             report["results"].append(metrics)
+            start = time.perf_counter()
             coarse = _coarse_verlet_rollout(teacher, initial, fine_steps, block, dt_ps)
+            coarse_seconds = time.perf_counter() - start
             metrics = _compare(coarse, reference, stride=block)
             metrics.update(
                 {
                     "method": f"teacher_coarse_verlet_L{block}",
                     "initial_index": int(index),
                     "force_evaluations": 2 * fine_steps // block,
+                    "wall_seconds": coarse_seconds,
+                    "speedup_vs_fine_teacher": reference_seconds / coarse_seconds,
                     "absolute_energy_drift_kj_mol": float(
                         abs(teacher.total_energy(coarse[-1]) - start_energy)
                     ),
@@ -160,6 +168,7 @@ def evaluate(
                     "initial_index": int(index),
                     "backbone_evaluations": fine_steps // block,
                     "wall_seconds": seconds,
+                    "speedup_vs_fine_teacher": reference_seconds / seconds,
                     "absolute_energy_drift_kj_mol": float(
                         abs(teacher.total_energy(states[-1]) - start_energy)
                     ),

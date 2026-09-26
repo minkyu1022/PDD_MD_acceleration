@@ -63,7 +63,7 @@ For the pretrained-weight ablation, use `--backend tiny` with a matched paramete
 
 ## Metrics and interpretation
 
-Evaluation uses held-out initial states from the AD-3 **test trajectory**. It reports position and velocity path/endpoint RMSE against the deterministic fine-step teacher, final absolute energy drift measured with the teacher potential, backbone evaluations, and inference wall time. It also reports an equal-forward direct transition baseline and coarse Verlet. Training and test states are never mixed.
+Evaluation uses held-out initial states from the AD-3 **test trajectory**. It compares each method with the deterministic fine-step teacher at its block endpoints and reports position and velocity path/endpoint RMSE, final absolute energy drift measured with the teacher potential, backbone evaluations, and inference wall time. The eSEN student algebraically fuses its linear heads when only a block endpoint is needed. Evaluation also reports an equal-forward direct transition baseline and coarse Verlet. Training and test states are never mixed.
 
 The CPU smoke test establishes that code runs, not that PDD improves accuracy or speed. Physical speedup needs timing on a target GPU and should include graph building, heads, teacher or baseline integration, and batch size. Long-time equilibrium sampling, free energy surfaces, and stochastic Langevin transitions are outside this first deterministic PoC.
 

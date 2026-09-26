@@ -51,5 +51,9 @@ def test_esen_tensor_contract(tmp_path: Path, otf_graph: bool):
     student = ParallelStudent(adapter, [1.0, 12.0, 16.0], 2, 0.0005)
     qdot, accel = student(q, v, 2)
     assert qdot.shape == accel.shape == (1, 2, 3, 3)
+    endpoint_q, endpoint_v = student.advance(q, v, 2)
+    fused_q, fused_v = student.advance_fused(q, v, 2)
+    assert torch.allclose(fused_q, endpoint_q, atol=1e-5)
+    assert torch.allclose(fused_v, endpoint_v, atol=1e-3, rtol=1e-4)
     (qdot.square().mean() + accel.square().mean()).backward()
     assert student.force_heads[0].linear.weight.grad is not None
