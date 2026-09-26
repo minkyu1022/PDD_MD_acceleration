@@ -35,6 +35,27 @@ pdd-md inspect-data --data-root data --split train
 
 The [eSEN checkpoint](https://huggingface.co/facebook/OMol25) is gated by its model license. Accept access on that page and log in with `hf auth login`; no token is stored in this repository. The default eSEN model ID is `esen-sm-direct-all-omol`. A local checkpoint path can also be supplied with `--checkpoint`.
 
+### Google Colab T4 smoke test
+
+In Colab's **Change runtime type** dialog, select **T4 GPU** and runtime version **2025.10**. The latest image on 2026-09-26 used Python 3.13, outside this project's supported range; image 2025.10 provided Python 3.12.12. In a code cell:
+
+```python
+!git clone https://github.com/minkyu1022/PDD_MD_acceleration.git
+%cd PDD_MD_acceleration
+%pip install -e ".[esen]"
+```
+
+Restart the Colab session after installation so the notebook kernel loads the installed PyTorch and editable package, then `%cd /content/PDD_MD_acceleration` again. For a short public-data CUDA run:
+
+```python
+!pdd-md download-data --data-root data
+!pdd-md train-force --backend tiny --data-root data --output runs/smoke/force.pt --max-frames 64 --steps 3 --batch-size 2 --device cuda --platform CPU
+!pdd-md train-pdd --data-root data --force-checkpoint runs/smoke/force.pt --output runs/smoke/pdd.pt --max-frames 64 --steps 4 --batch-size 2 --max-block 4 --block-sizes 1 2 4 --device cuda --platform CPU
+!pdd-md evaluate --data-root data --pdd-checkpoint runs/smoke/pdd.pt --output runs/smoke/eval.json --max-frames 64 --samples 2 --fine-steps 8 --blocks 1 2 4 --device cuda --platform CPU
+```
+
+The [recorded Colab T4 run](results/colab_t4_smoke_2026-09-26.md) confirms GPU execution; its three/four training updates are only a wiring check. The pretrained eSEN checkpoint requires Hugging Face authentication in that Colab session or a local checkpoint file there.
+
 Training writes an atomic checkpoint at `--output` every 500 updates by default and on completion. Pass `--resume runs/esen/pdd.pt` together with a larger `--steps` value to continue an interrupted run with optimizer and sampling RNG restored. Checkpoints and data stay outside Git.
 
 ## Small local smoke test
