@@ -6,7 +6,7 @@ import argparse
 import json
 
 from .data import download_ad3, load_ad3
-from .evaluate import evaluate
+from .evaluate import evaluate, evaluate_force
 from .teacher import OpenMMTeacher
 from .train import train_direct, train_force, train_pdd, validate_teacher
 
@@ -67,6 +67,15 @@ def build_parser():
     direct.add_argument("--dt-ps", type=float, default=0.0005)
     direct.add_argument("--velocity-scale", type=float, default=10.0)
     direct.add_argument("--accel-scale", type=float, default=10000.0)
+    force_test = commands.add_parser("evaluate-force")
+    force_test.add_argument("--data-root", default="data")
+    force_test.add_argument("--force-checkpoint", required=True)
+    force_test.add_argument("--output", required=True)
+    force_test.add_argument("--samples", type=int, default=64)
+    force_test.add_argument("--max-frames", type=int)
+    force_test.add_argument("--batch-size", type=int, default=16)
+    force_test.add_argument("--device", default="cpu")
+    force_test.add_argument("--platform", default="CPU")
     test = commands.add_parser("evaluate")
     test.add_argument("--data-root", default="data")
     test.add_argument("--pdd-checkpoint", required=True)
@@ -110,6 +119,8 @@ def main(argv=None):
         train_pdd(**kw)
     elif name == "train-direct":
         train_direct(**kw)
+    elif name == "evaluate-force":
+        evaluate_force(**kw)
     elif name == "evaluate":
         kw["block_sizes"] = tuple(kw.pop("blocks"))
         evaluate(**kw)

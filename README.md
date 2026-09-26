@@ -43,6 +43,7 @@ These commands exercise the complete pipeline without a gated checkpoint. The fe
 
 ```bash
 pdd-md train-force --backend tiny --data-root data --output runs/smoke/force.pt --max-frames 64 --steps 3 --batch-size 2
+pdd-md evaluate-force --data-root data --force-checkpoint runs/smoke/force.pt --output runs/smoke/force_eval.json --max-frames 64 --samples 8
 pdd-md train-pdd --data-root data --force-checkpoint runs/smoke/force.pt --output runs/smoke/pdd.pt --max-frames 64 --steps 4 --batch-size 2 --max-block 4 --block-sizes 1 2 4
 pdd-md train-direct --data-root data --force-checkpoint runs/smoke/force.pt --output runs/smoke/direct.pt --max-frames 64 --steps 2 --batch-size 1 --coarse-factor 4
 pdd-md evaluate --data-root data --pdd-checkpoint runs/smoke/pdd.pt --direct-checkpoint runs/smoke/direct.pt --output runs/smoke/eval.json --max-frames 64 --samples 2 --fine-steps 8 --blocks 1 2 4
@@ -54,6 +55,7 @@ Run on a CUDA machine after eSEN checkpoint access is approved. This is a starti
 
 ```bash
 pdd-md train-force --backend esen --data-root data --output runs/esen/force.pt --steps 5000 --batch-size 16 --device cuda --platform CPU
+pdd-md evaluate-force --data-root data --force-checkpoint runs/esen/force.pt --output runs/esen/force_eval.json --samples 128 --device cuda --platform CPU
 pdd-md train-pdd --data-root data --force-checkpoint runs/esen/force.pt --output runs/esen/pdd.pt --steps 10000 --batch-size 8 --max-block 8 --block-sizes 1 2 4 8 --prefix-blocks 2 --device cuda --platform CPU
 pdd-md train-direct --data-root data --force-checkpoint runs/esen/force.pt --output runs/esen/direct_L8.pt --coarse-factor 8 --steps 10000 --batch-size 8 --device cuda --platform CPU
 pdd-md evaluate --data-root data --pdd-checkpoint runs/esen/pdd.pt --direct-checkpoint runs/esen/direct_L8.pt --output runs/esen/eval.json --blocks 1 2 4 8 --fine-steps 80 --samples 32 --device cuda --platform CPU
@@ -63,7 +65,7 @@ For the pretrained-weight ablation, use `--backend tiny` with a matched paramete
 
 ## Metrics and interpretation
 
-Evaluation uses held-out initial states from the AD-3 **test trajectory**. It compares each method with the deterministic fine-step teacher at its block endpoints and reports position and velocity path/endpoint RMSE, final absolute energy drift measured with the teacher potential, backbone evaluations, and inference wall time. The eSEN student algebraically fuses its linear heads when only a block endpoint is needed. Evaluation also reports an equal-forward direct transition baseline and coarse Verlet. Training and test states are never mixed.
+Evaluation uses held-out initial states from the AD-3 **test trajectory**. `evaluate-force` first measures force RMSE against the OpenMM teacher. Trajectory evaluation compares each method with the deterministic fine-step teacher at its block endpoints and reports position and velocity path/endpoint RMSE, final absolute energy drift measured with the teacher potential, backbone evaluations, inference wall time, and speed ratio to the fine teacher. The eSEN student algebraically fuses its linear heads when only a block endpoint is needed. Evaluation also reports an equal-forward direct transition baseline and coarse Verlet. Training and test states are never mixed. The timing ratio is hardware and batch-size specific; it should not be read as a portable speedup.
 
 The CPU smoke test establishes that code runs, not that PDD improves accuracy or speed. Physical speedup needs timing on a target GPU and should include graph building, heads, teacher or baseline integration, and batch size. Long-time equilibrium sampling, free energy surfaces, and stochastic Langevin transitions are outside this first deterministic PoC.
 

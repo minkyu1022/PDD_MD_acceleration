@@ -10,8 +10,67 @@ import numpy as np
 import torch
 
 from .data import load_ad3
+from .model import make_adapter
 from .teacher import OpenMMTeacher, PhaseState
-from .train import load_student, validate_teacher
+from .train import _load, load_student, validate_teacher
+
+
+def evaluate_force(
+    data_root: str,
+    force_checkpoint: str,
+    output: str,
+    samples: int = 64,
+    max_frames: int | None = None,
+    batch_size: int = 16,
+    platform: str = "CPU",
+    device: str = "cpu",
+):
+    """Measure warm-start force accuracy against the same teacher on AD-3 test states."""
+    if samples <= 0 or batch_size <= 0:
+        raise ValueError("samples and batch_size must be positive")
+    trajectory = load_ad3(data_root, "test", max_frames)
+    teacher = OpenMMTeacher(trajectory.pdb_path, platform)
+    saved = _load(force_checkpoint)
+    if saved["kind"] != "force":
+        raise ValueError("Expected a force warm-start checkpoint")
+    adapter = make_adapter(
+        saved["backend"],
+        saved["atomic_numbers"],
+        saved["checkpoint"],
+        saved["hidden"],
+    ).to(device)
+    adapter.load_state_dict(saved["adapter"])
+    adapter.eval()
+    indices = np.linspace(
+        0, len(trajectory) - 1, num=min(samples, len(trajectory)), dtype=int
+    )
+    predictions = []
+    with torch.no_grad():
+        for start in range(0, len(indices), batch_size):
+            batch = indices[start : start + batch_size]
+            q = torch.as_tensor(
+                trajectory.positions[batch], dtype=torch.float32, device=device
+            )
+            predictions.append(adapter(q).cpu().numpy())
+    predicted = np.concatenate(predictions).astype(np.float64)
+    reference = np.stack([teacher.force(trajectory.positions[i]) for i in indices])
+    stored = trajectory.forces[indices].astype(np.float64)
+    report = {
+        "test_frames": len(trajectory),
+        "test_indices": indices.tolist(),
+        "force_rmse_teacher_ev_a": float(
+            np.sqrt(np.mean((predicted - reference) ** 2))
+        ),
+        "force_mae_teacher_ev_a": float(np.mean(np.abs(predicted - reference))),
+        "ad3_force_rmse_teacher_ev_a": float(
+            np.sqrt(np.mean((stored - reference) ** 2))
+        ),
+    }
+    path = Path(output)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2))
+    print(json.dumps(report, indent=2), flush=True)
+    return report
 
 
 def _student_rollout(
@@ -38,11 +97,21 @@ def _student_rollout(
 
 
 def _coarse_verlet_rollout(teacher, initial, total_steps, block, dt_ps):
+    import openmm
+
     states = [initial]
     current = initial
     for _ in range(total_steps // block):
-        current = teacher.step(current, block * dt_ps)
+        try:
+            current = teacher.step(current, block * dt_ps)
+        except openmm.OpenMMException:
+            current = PhaseState(
+                np.full_like(initial.q, np.nan), np.full_like(initial.v, np.nan)
+            )
         states.append(current)
+        if not _finite_states([current]):
+            states.extend([current] * (total_steps // block - len(states) + 1))
+            break
     return states
 
 
@@ -62,6 +131,41 @@ def _compare(student_states, teacher_states, stride=1):
         "q_path_rmse_angstrom": float(np.sqrt(np.mean(qerr**2))),
         "v_path_rmse_angstrom_per_ps": float(np.sqrt(np.mean(verr**2))),
     }
+
+
+def _finite_states(states):
+    return all(
+        np.isfinite(state.q).all() and np.isfinite(state.v).all() for state in states
+    )
+
+
+def _energy_drift(teacher, state, start_energy):
+    if not np.isfinite(state.q).all() or not np.isfinite(state.v).all():
+        return None
+    import openmm
+
+    try:
+        value = abs(teacher.total_energy(state) - start_energy)
+    except openmm.OpenMMException:
+        return None
+    return float(value) if np.isfinite(value) else None
+
+
+def _metrics_or_failure(states, reference, teacher, start_energy, stride):
+    drift = _energy_drift(teacher, states[-1], start_energy)
+    stable = _finite_states(states) and drift is not None
+    metrics = (
+        _compare(states, reference, stride=stride)
+        if stable
+        else {
+            "q_endpoint_rmse_angstrom": None,
+            "v_endpoint_rmse_angstrom_per_ps": None,
+            "q_path_rmse_angstrom": None,
+            "v_path_rmse_angstrom_per_ps": None,
+        }
+    )
+    metrics.update({"stable": stable, "absolute_energy_drift_kj_mol": drift})
+    return metrics
 
 
 def evaluate(
@@ -123,16 +227,17 @@ def evaluate(
             states, seconds = _student_rollout(
                 student, initial, fine_steps, block, device
             )
-            metrics = _compare(states, reference, stride=block)
+            metrics = _metrics_or_failure(
+                states, reference, teacher, start_energy, stride=block
+            )
             metrics.update(
                 {
                     "method": f"pdd_L{block}",
                     "initial_index": int(index),
                     "backbone_evaluations": fine_steps // block,
                     "wall_seconds": seconds,
-                    "speedup_vs_fine_teacher": reference_seconds / seconds,
-                    "absolute_energy_drift_kj_mol": float(
-                        abs(teacher.total_energy(states[-1]) - start_energy)
+                    "speedup_vs_fine_teacher": (
+                        reference_seconds / seconds if metrics["stable"] else None
                     ),
                 }
             )
@@ -140,16 +245,19 @@ def evaluate(
             start = time.perf_counter()
             coarse = _coarse_verlet_rollout(teacher, initial, fine_steps, block, dt_ps)
             coarse_seconds = time.perf_counter() - start
-            metrics = _compare(coarse, reference, stride=block)
+            metrics = _metrics_or_failure(
+                coarse, reference, teacher, start_energy, stride=block
+            )
             metrics.update(
                 {
                     "method": f"teacher_coarse_verlet_L{block}",
                     "initial_index": int(index),
                     "force_evaluations": 2 * fine_steps // block,
                     "wall_seconds": coarse_seconds,
-                    "speedup_vs_fine_teacher": reference_seconds / coarse_seconds,
-                    "absolute_energy_drift_kj_mol": float(
-                        abs(teacher.total_energy(coarse[-1]) - start_energy)
+                    "speedup_vs_fine_teacher": (
+                        reference_seconds / coarse_seconds
+                        if metrics["stable"]
+                        else None
                     ),
                 }
             )
@@ -161,16 +269,17 @@ def evaluate(
             states, seconds = _student_rollout(
                 direct, initial, fine_steps // block, 1, device
             )
-            metrics = _compare(states, reference, stride=block)
+            metrics = _metrics_or_failure(
+                states, reference, teacher, start_energy, stride=block
+            )
             metrics.update(
                 {
                     "method": f"direct_L{block}",
                     "initial_index": int(index),
                     "backbone_evaluations": fine_steps // block,
                     "wall_seconds": seconds,
-                    "speedup_vs_fine_teacher": reference_seconds / seconds,
-                    "absolute_energy_drift_kj_mol": float(
-                        abs(teacher.total_energy(states[-1]) - start_energy)
+                    "speedup_vs_fine_teacher": (
+                        reference_seconds / seconds if metrics["stable"] else None
                     ),
                 }
             )
@@ -179,10 +288,13 @@ def evaluate(
     for method in sorted({row["method"] for row in report["results"]}):
         rows = [row for row in report["results"] if row["method"] == method]
         summary[method] = {
-            key: float(np.mean([row[key] for row in rows]))
-            for key in rows[0]
-            if key not in {"method", "initial_index"}
+            "stable_fraction": float(np.mean([r["stable"] for r in rows]))
         }
+        for key in rows[0]:
+            if key in {"method", "initial_index", "stable"}:
+                continue
+            values = [row[key] for row in rows if row[key] is not None]
+            summary[method][key] = float(np.mean(values)) if values else None
     report["summary"] = summary
     path = Path(output)
     path.parent.mkdir(parents=True, exist_ok=True)
