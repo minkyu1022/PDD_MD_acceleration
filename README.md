@@ -93,6 +93,8 @@ The first measured CPU run is recorded in [results/cpu_pilot_2026-09-26.md](resu
 
 The [failure-horizon and eSEN compute diagnostic](results/diagnostics_2026-09-26.md) uses the later 1,200-update local PDD checkpoint. `pdd-md diagnose` measures held-out rollout error at specified fine-step horizons and checks that fused heads match the ordinary head calculation. `pdd-md benchmark-mlip` times PDD block decoding against velocity Verlet with forces obtained by differentiating the eSEN energy head. That benchmark isolates compute; the current PDD student and energy-gradient trajectory use **different potentials**, so its timing ratio is not a validated MD speedup. Example:
 
+The [Colab T4 eSEN compute benchmark](results/colab_t4_mlip_compute_2026-09-26.md) measured roughly 9–10× less inference time for PDD L4 than for energy-gradient eSEN at matched simulated step counts. PDD's 80-step endpoints were nonfinite in that measurement, and it was trained on a different potential; the result is a compute diagnostic only.
+
 ```bash
 pdd-md diagnose --data-root data --pdd-checkpoint runs/esen/pdd.pt --output runs/esen/diagnose.json --block 4 --horizons 4 8 20 40 80 --samples 8 --device cuda
 pdd-md benchmark-mlip --data-root data --pdd-checkpoint runs/esen/pdd.pt --output runs/esen/benchmark_mlip.json --block 4 --fine-steps 80 --batch-sizes 1 8 32 --device cuda
