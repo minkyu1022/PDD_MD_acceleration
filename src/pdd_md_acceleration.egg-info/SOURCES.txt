@@ -1,0 +1,15 @@
+pyproject.toml
+src/pdd_md/__init__.py
+src/pdd_md/cli.py
+src/pdd_md/data.py
+src/pdd_md/evaluate.py
+src/pdd_md/model.py
+src/pdd_md/teacher.py
+src/pdd_md/train.py
+src/pdd_md/units.py
+src/pdd_md_acceleration.egg-info/PKG-INFO
+src/pdd_md_acceleration.egg-info/SOURCES.txt
+src/pdd_md_acceleration.egg-info/dependency_links.txt
+src/pdd_md_acceleration.egg-info/entry_points.txt
+src/pdd_md_acceleration.egg-info/requires.txt
+src/pdd_md_acceleration.egg-info/top_level.txt

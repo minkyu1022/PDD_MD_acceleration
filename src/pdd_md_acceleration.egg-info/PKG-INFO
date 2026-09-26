@@ -1,0 +1,15 @@
+Metadata-Version: 2.4
+Name: pdd-md-acceleration
+Version: 0.1.0
+Summary: Parallel decoding distillation proof of concept for alanine dipeptide molecular dynamics
+Requires-Python: <3.13,>=3.11
+Requires-Dist: numpy<3,>=1.26
+Requires-Dist: torch<3,>=2.3
+Requires-Dist: openmm<9,>=8.1
+Requires-Dist: ase>=3.23
+Requires-Dist: huggingface-hub>=0.25
+Requires-Dist: pyyaml>=6
+Provides-Extra: esen
+Requires-Dist: fairchem-core<3,>=2.0; extra == "esen"
+Provides-Extra: test
+Requires-Dist: pytest>=8; extra == "test"
