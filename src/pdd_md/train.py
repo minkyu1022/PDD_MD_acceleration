@@ -219,6 +219,8 @@ def _student_from_force(force_checkpoint, max_block, dt_ps, device):
 
 
 def _teacher_mean_batch(teacher, q, v, dt_ps):
+    if hasattr(teacher, "mean_velocity_batch"):
+        return teacher.mean_velocity_batch(q, v, dt_ps)
     q_np, v_np = q.detach().cpu().numpy(), v.detach().cpu().numpy()
     means = [
         teacher.mean_velocity(PhaseState(q_np[i], v_np[i]), dt_ps)

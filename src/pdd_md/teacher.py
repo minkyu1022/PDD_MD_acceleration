@@ -169,6 +169,27 @@ class ESENEnergyTeacher(OpenMMTeacher):
         )
         return force[0].cpu().numpy().astype(np.float64), energy_kj_mol
 
+    def mean_velocity_batch(self, q, v, dt_ps: float):
+        """Two batched energy gradients for on-policy Verlet targets."""
+        if dt_ps <= 0:
+            raise ValueError("dt_ps must be positive")
+        if q.shape != v.shape or q.ndim != 3 or q.shape[1:] != (self.natoms, 3):
+            raise ValueError("q and v must have shape [batch, atoms, 3]")
+        q0 = q.detach().to(device=self.device, dtype=self._torch.float64)
+        v0 = v.detach().to(device=self.device, dtype=self._torch.float64)
+        mass_factor = self._torch.as_tensor(
+            ACCEL_PER_FORCE_PER_DALTON / self.masses,
+            device=self.device,
+            dtype=self._torch.float64,
+        )[None, :, None]
+        a0 = self.model.force(q0.float()).double() * mass_factor
+        v_half = v0 + 0.5 * dt_ps * a0
+        q1 = q0 + dt_ps * v_half
+        a1 = self.model.force(q1.float()).double() * mass_factor
+        v1 = v_half + 0.5 * dt_ps * a1
+        self.force_calls += 2 * len(q0)
+        return ((q1 - q0) / dt_ps).to(q.dtype), ((v1 - v0) / dt_ps).to(v.dtype)
+
     def close(self):
         del self.model
 
