@@ -17,9 +17,15 @@ Local Mac CPU pilot: force-head adaptation, 200 updates with batch size 4 and 2,
 
 The L4 student is faster, but coarse Verlet is more accurate and has much less energy drift. The current PDD model does not dominate this essential baseline.
 
+### Colab T4 replication
+
+The same experiment was rerun in [the saved Colab notebook](https://colab.research.google.com/drive/1cu_gd8PUYz4fgEVpNHXLB3mdIZxokhSX) on a free Tesla T4: 100 force-head updates and 200 PDD updates, batch size 4, 2,048 training frames. Eight-step evaluation used the same eight held-out indices. PDD L4 was finite 8/8, with mean endpoint position RMSE **0.00794 Å**, mean absolute energy drift **60.16 kJ/mol**, mean wall time **0.0631 s**, and **10.64×** speed ratio to the fine energy-gradient teacher. Coarse Verlet L4 had **0.00250 Å**, **3.31 kJ/mol**, **0.2128 s**, and **3.05×**, respectively. The result closely matches the CPU accuracy finding. Notebook cells 29–33 contain the data preparation, training, evaluation, and diagnostic commands and outputs; the Colab VM checkpoints are ephemeral.
+
 ## Longer L4 rollout, four held-out initial states
 
 Median position RMSE is 0.00855 Å at 8 steps, 0.0286 Å at 20 steps, and 0.103 Å at 40 steps. All four trajectories have exceeded 0.1 Å by step 40 (20 fs). At 80 steps (40 fs), one is nonfinite; the other three are finite but all exceed 0.1 Å, with one as large as 4.09e17 Å. Fused versus ordinary head arithmetic differs by at most 9.54e-7 Å in one block, ruling out head fusion as the failure source.
+
+On the T4 replica, the four-trajectory 40-step median is also **0.103 Å** and all four exceed 0.1 Å. At 80 steps one is nonfinite; the remaining three all exceed 0.1 Å (one reaches 1.69e17 Å). GPU head fusion differs from ordinary arithmetic by at most 4.77e-7 Å over one block.
 
 ## Interpretation
 
