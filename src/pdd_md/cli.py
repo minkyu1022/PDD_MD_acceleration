@@ -105,7 +105,7 @@ def main(argv=None):
     kw = vars(args)
     name = kw.pop("command")
     if name == "download-data":
-        for path in download_ad3(**kw):
+        for path in download_ad3(kw["data_root"]):
             print(path)
     elif name == "inspect-data":
         trajectory = load_ad3(kw["data_root"], kw["split"])
