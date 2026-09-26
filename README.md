@@ -53,6 +53,8 @@ pdd-md evaluate --data-root data --pdd-checkpoint runs/smoke/pdd.pt --direct-che
 
 Run on a CUDA machine after eSEN checkpoint access is approved. This is a starting budget; increase the number of iterations after measuring learning curves and held-out results.
 
+`bash scripts/run_experiment.sh` runs download, force adaptation, held-out force check, PDD training, direct baseline training, and trajectory evaluation in order. Set `RUN_ROOT`, `DEVICE`, `FORCE_STEPS`, `STUDENT_STEPS`, and batch-size environment variables to change the default budget.
+
 ```bash
 pdd-md train-force --backend esen --data-root data --output runs/esen/force.pt --steps 5000 --batch-size 16 --device cuda --platform CPU
 pdd-md evaluate-force --data-root data --force-checkpoint runs/esen/force.pt --output runs/esen/force_eval.json --samples 128 --device cuda --platform CPU
@@ -65,7 +67,7 @@ For the pretrained-weight ablation, use `--backend tiny` with a matched paramete
 
 ## Metrics and interpretation
 
-Evaluation uses held-out initial states from the AD-3 **test trajectory**. `evaluate-force` first measures force RMSE against the OpenMM teacher. Trajectory evaluation compares each method with the deterministic fine-step teacher at its block endpoints and reports position and velocity path/endpoint RMSE, final absolute energy drift measured with the teacher potential, backbone evaluations, inference wall time, and speed ratio to the fine teacher. The eSEN student algebraically fuses its linear heads when only a block endpoint is needed. Evaluation also reports an equal-forward direct transition baseline and coarse Verlet. Training and test states are never mixed. The timing ratio is hardware and batch-size specific; it should not be read as a portable speedup.
+Evaluation uses held-out initial states from the AD-3 **test trajectory**. `evaluate-force` first measures force RMSE against the OpenMM teacher. Trajectory evaluation compares each method with the deterministic fine-step teacher at its block endpoints and reports position and velocity path/endpoint RMSE, final absolute energy drift measured with the teacher potential, backbone evaluations, inference wall time, and speed ratio to the fine teacher. The `finite_fraction` field counts trajectories with finite coordinates, velocities, and final energy; it does **not** imply physically accurate dynamics. Nonfinite trajectories are reported with null errors instead of ending the evaluation. The eSEN student algebraically fuses its linear heads when only a block endpoint is needed. Evaluation also reports an equal-forward direct transition baseline and coarse Verlet. Training and test states are never mixed. The timing ratio is hardware and batch-size specific; it should not be read as a portable speedup.
 
 The CPU smoke test establishes that code runs, not that PDD improves accuracy or speed. Physical speedup needs timing on a target GPU and should include graph building, heads, teacher or baseline integration, and batch size. Long-time equilibrium sampling, free energy surfaces, and stochastic Langevin transitions are outside this first deterministic PoC.
 

@@ -57,6 +57,8 @@ def load_ad3(
 ) -> AD3Trajectory:
     if split not in FILES:
         raise ValueError(f"Unknown AD-3 split: {split}")
+    if max_frames is not None and max_frames <= 0:
+        raise ValueError("max_frames must be positive")
     directory = Path(root) / "AD-3" / split
     npz = directory / FILES[split][0]
     pdb = directory / FILES[split][1]
