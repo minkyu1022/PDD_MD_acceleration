@@ -12,6 +12,8 @@ We diagnosed the existing **1,200-update local eSEN PDD checkpoint** on eight he
 
 All eight trajectories exceed 0.1 Å position RMSE or become nonfinite by 80 fine steps. “Finite” only checks NaN/Inf; the lone finite endpoint is physically meaningless. This points to compounding rollout error, not a failure in the fused implementation: `advance` versus `advance_fused` differed by at most **4.77×10⁻⁷ Å** in position and **3.43×10⁻⁵ Å/ps** in velocity across the eight starting states. The diagnostic checks those two calculations after **one L4 block**.
 
+We resumed the same PDD run from 1,200 to **1,600 updates**, retaining batch size 4, block sampling 1/2/4, and up to two on-policy prefix blocks. At 40 fine steps, median position RMSE shifted from 0.0711 Å to **0.0667 Å**. At 80 fine steps, the finite count rose from 1/8 to **4/8**, but **all eight** were either nonfinite or exceeded 0.1 Å. The first 0.1 Å crossing occurred between **48 and 64 fine steps** (24–32 fs), depending on the initial state. Thus the extra 400 updates did not solve long-rollout accuracy.
+
 We also timed **eSEN energy-head gradients integrated with velocity Verlet** against this PDD student on the **same Mac CPU**, with three measured repeats after one warmup. The energy-gradient baseline needs 9 energy/gradient evaluations over 8 fine steps; PDD L4 needs 2 backbone evaluations. Both use the same pretrained eSEN-sm-direct checkpoint architecture and 22-atom AD-3 states.
 
 | Independent trajectories | PDD L4 | eSEN energy-gradient Verlet | Energy/PDD compute ratio |

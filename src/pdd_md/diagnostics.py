@@ -52,6 +52,7 @@ def diagnose_rollout(
     )
     rows = []
     fusion = []
+    onset = []
     for index in indices:
         initial = PhaseState(*trajectory.state(int(index)))
         reference = teacher.rollout(initial, horizons[-1], saved["dt_ps"])
@@ -69,10 +70,10 @@ def diagnose_rollout(
                     ),
                 }
             )
+            first_over_0p1 = None
+            first_nonfinite = None
             for fine_step in range(block, horizons[-1] + 1, block):
                 q, v = student.advance_fused(q, v, block)
-                if fine_step not in horizons:
-                    continue
                 finite = bool(torch.isfinite(q).all() and torch.isfinite(v).all())
                 ref = reference[fine_step]
                 q_error = (
@@ -85,6 +86,16 @@ def diagnose_rollout(
                     if finite
                     else None
                 )
+                if first_over_0p1 is None and (
+                    q_error is None or q_error > 0.1
+                ):
+                    first_over_0p1 = fine_step
+                if not finite:
+                    first_nonfinite = fine_step
+                if fine_step not in horizons:
+                    if not finite:
+                        break
+                    continue
                 rows.append(
                     {
                         "initial_index": int(index),
@@ -94,6 +105,27 @@ def diagnose_rollout(
                         "v_rmse_angstrom_per_ps": v_error,
                     }
                 )
+                if not finite:
+                    break
+            if first_nonfinite is not None:
+                for remaining in horizons:
+                    if remaining > first_nonfinite:
+                        rows.append(
+                            {
+                                "initial_index": int(index),
+                                "fine_steps": remaining,
+                                "finite": False,
+                                "q_rmse_angstrom": None,
+                                "v_rmse_angstrom_per_ps": None,
+                            }
+                        )
+            onset.append(
+                {
+                    "initial_index": int(index),
+                    "first_q_error_over_0p1_angstrom_fine_step": first_over_0p1,
+                    "first_nonfinite_fine_step": first_nonfinite,
+                }
+            )
     summary = {}
     for horizon in horizons:
         selected = [r for r in rows if r["fine_steps"] == horizon]
@@ -133,6 +165,7 @@ def diagnose_rollout(
             ),
             "summary": summary,
             "fusion": fusion,
+            "failure_onset": onset,
             "rows": rows,
         },
     )
