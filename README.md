@@ -98,6 +98,7 @@ The [Colab T4 eSEN compute benchmark](results/colab_t4_mlip_compute_2026-09-26.m
 For a **same-potential** experiment, `--teacher-backend esen-energy` differentiates the energy head of the specified eSEN checkpoint at every teacher step. The force warm-start checkpoint records this choice; `train-pdd`, `train-direct`, `evaluate`, `evaluate-force`, and `diagnose` then inherit it. AD-3 supplies initial states only. Example after downloading AD-3 and the eSEN checkpoint:
 
 The [same-potential CPU pilot](results/same_potential_2026-09-26.md) establishes that this path runs and measures short- and longer-horizon errors against the eSEN energy-gradient teacher.
+The [T4 L4/batch-16 learning curve](results/l4_batch16_learning_curve_2026-09-26.md) follows a larger-batch, L4-only student through 1,000 updates, then compares two 1,500-update loss-weight continuations on fixed held-out states, rollout accuracy, and energy drift.
 
 ```bash
 pdd-md train-force --backend esen --checkpoint data/esen/checkpoints/esen_sm_direct_all.pt --teacher-backend esen-energy --data-root data --output runs/esen-energy/force.pt --steps 200 --device cuda
@@ -106,6 +107,8 @@ pdd-md evaluate --data-root data --pdd-checkpoint runs/esen-energy/pdd.pt --outp
 ```
 
 The eSEN energy head was pretrained on OMol configurations, not generated as an MD stability guarantee for AD-3. Check trajectory accuracy and energy drift before interpreting any speed ratio.
+
+For a fixed held-out learning curve, run `pdd-md validate-pdd --data-root data --pdd-checkpoint runs/esen-energy/pdd.pt --output runs/esen-energy/validation.json --block 4 --samples 64 --batch-size 16 --device cuda` at each saved checkpoint. This reports the same per-head on-policy PDD objective on evenly spaced AD-3 test initial states. The eSEN teacher evaluates each batch together, so training with a larger batch can use the GPU more effectively. Continue a run with `--resume OLD_CHECKPOINT --steps TOTAL_STEPS --output NEW_CHECKPOINT`; the step count is total updates, not additional updates.
 
 ```bash
 pdd-md diagnose --data-root data --pdd-checkpoint runs/esen/pdd.pt --output runs/esen/diagnose.json --block 4 --horizons 4 8 20 40 80 --samples 8 --device cuda
