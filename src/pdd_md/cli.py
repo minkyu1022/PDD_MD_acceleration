@@ -6,7 +6,7 @@ import argparse
 import json
 
 from .data import download_ad3, load_ad3
-from .diagnostics import benchmark_mlip, diagnose_rollout
+from .diagnostics import benchmark_mlip, diagnose_rollout, validate_pdd
 from .evaluate import benchmark_inference, evaluate, evaluate_force
 from .teacher import OpenMMTeacher
 from .train import train_direct, train_force, train_pdd, validate_teacher
@@ -118,6 +118,18 @@ def build_parser():
     diagnose.add_argument("--max-frames", type=int)
     diagnose.add_argument("--platform", default="CPU")
     diagnose.add_argument("--device", default="cpu")
+    validation = commands.add_parser(
+        "validate-pdd", help="Fixed held-out per-head PDD loss"
+    )
+    validation.add_argument("--data-root", default="data")
+    validation.add_argument("--pdd-checkpoint", required=True)
+    validation.add_argument("--output", required=True)
+    validation.add_argument("--block", type=int, default=4)
+    validation.add_argument("--samples", type=int, default=64)
+    validation.add_argument("--batch-size", type=int, default=8)
+    validation.add_argument("--max-frames", type=int)
+    validation.add_argument("--platform", default="CPU")
+    validation.add_argument("--device", default="cpu")
     mlip_bench = commands.add_parser(
         "benchmark-mlip", help="Compare PDD compute with eSEN energy-gradient Verlet"
     )
@@ -173,6 +185,8 @@ def main(argv=None):
     elif name == "diagnose":
         kw["horizons"] = tuple(kw["horizons"])
         diagnose_rollout(**kw)
+    elif name == "validate-pdd":
+        validate_pdd(**kw)
     elif name == "benchmark-mlip":
         kw["batch_sizes"] = tuple(kw["batch_sizes"])
         benchmark_mlip(**kw)

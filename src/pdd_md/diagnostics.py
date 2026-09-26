@@ -13,7 +13,7 @@ from .data import load_ad3
 from .evaluate import _synchronize
 from .model import ESENEnergyGradient
 from .teacher import PhaseState, make_teacher, teacher_config
-from .train import load_student
+from .train import _teacher_mean_batch, load_student
 from .units import ACCEL_PER_FORCE_PER_DALTON
 
 
@@ -23,6 +23,75 @@ def _write(output: str, report: dict):
     path.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2), flush=True)
     return report
+
+
+def validate_pdd(
+    data_root: str,
+    pdd_checkpoint: str,
+    output: str,
+    block: int = 4,
+    samples: int = 64,
+    batch_size: int = 8,
+    max_frames: int | None = None,
+    platform: str = "CPU",
+    device: str = "cpu",
+):
+    """Fixed held-out, per-head on-policy PD loss for learning curves."""
+    if samples <= 0 or batch_size <= 0:
+        raise ValueError("samples and batch_size must be positive")
+    trajectory = load_ad3(data_root, "test", max_frames)
+    student, saved = load_student(pdd_checkpoint, device)
+    if not 1 <= block <= saved["max_block"]:
+        raise ValueError("block exceeds checkpoint max_block")
+    teacher = make_teacher(
+        trajectory.pdb_path, platform=platform, **teacher_config(saved, device)
+    )
+    indices = np.linspace(
+        0, len(trajectory) - 1, num=min(samples, len(trajectory)), dtype=int
+    )
+    q_sse = np.zeros(block, dtype=np.float64)
+    a_sse = np.zeros(block, dtype=np.float64)
+    element_count = 0
+    with torch.no_grad():
+        for start in range(0, len(indices), batch_size):
+            subset = indices[start : start + batch_size]
+            q = torch.as_tensor(
+                trajectory.positions[subset], dtype=torch.float32, device=device
+            )
+            v = torch.as_tensor(
+                trajectory.velocities[subset], dtype=torch.float32, device=device
+            )
+            qdot, accel = student(q, v, block)
+            qs, vs = student.states_in_block(q, v, qdot, accel)
+            for k in range(block):
+                target_qdot, target_accel = _teacher_mean_batch(
+                    teacher, qs[:, k], vs[:, k], saved["dt_ps"]
+                )
+                q_sse[k] += float(((qdot[:, k] - target_qdot) ** 2).sum().cpu())
+                a_sse[k] += float(((accel[:, k] - target_accel) ** 2).sum().cpu())
+            element_count += q.numel()
+    q_rmse = np.sqrt(q_sse / element_count)
+    a_rmse = np.sqrt(a_sse / element_count)
+    q_scale = saved.get("velocity_scale", 10.0)
+    a_scale = saved.get("accel_scale", 10000.0)
+    return _write(
+        output,
+        {
+            "pdd_checkpoint": pdd_checkpoint,
+            "checkpoint_iteration": saved["iteration"],
+            "teacher_backend": saved.get("teacher_backend", "openmm"),
+            "block": block,
+            "test_indices": indices.tolist(),
+            "per_head_qdot_rmse_angstrom_per_ps": q_rmse.tolist(),
+            "per_head_accel_rmse_angstrom_per_ps2": a_rmse.tolist(),
+            "per_head_scaled_pd_loss": (
+                (q_rmse / q_scale) ** 2 + (a_rmse / a_scale) ** 2
+            ).tolist(),
+            "mean_scaled_pd_loss": float(
+                np.mean((q_rmse / q_scale) ** 2 + (a_rmse / a_scale) ** 2)
+            ),
+        },
+    )
 
 
 def diagnose_rollout(
