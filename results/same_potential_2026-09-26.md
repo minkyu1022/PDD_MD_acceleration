@@ -17,6 +17,10 @@ Local Mac CPU pilot: force-head adaptation, 200 updates with batch size 4 and 2,
 
 The L4 student is faster, but coarse Verlet is more accurate and has much less energy drift. The current PDD model does not dominate this essential baseline.
 
+### Did the student learn?
+
+We evaluated a zero-update PDD initialized from the same 200-update force adapter on the **same eight test states**. Its L4 endpoint position RMSE was 0.00928 Å and absolute energy drift was 81.02 kJ/mol; after 200 PDD updates these fell to 0.00794 Å (14.4% lower) and 60.12 kJ/mol. L1 and L2 position errors also fell by 8.0% and 17.9%. Thus the PDD updates had a measurable effect, but the pilot does not establish convergence. The force adapter's held-out 64-state RMSE versus the eSEN energy-gradient teacher is 0.0149 eV/Å. With random block sizes in {1,2,4} and one randomly selected intra-block target per training sample, the fourth head receives only about 1/12 of the 800 sample-targets in expectation, approximately 67. A fixed validation loss and a longer checkpoint curve are needed to distinguish undertraining from an architectural limit.
+
 ### Colab T4 replication
 
 The same experiment was rerun in [the saved Colab notebook](https://colab.research.google.com/drive/1cu_gd8PUYz4fgEVpNHXLB3mdIZxokhSX) on a free Tesla T4: 100 force-head updates and 200 PDD updates, batch size 4, 2,048 training frames. Eight-step evaluation used the same eight held-out indices. PDD L4 was finite 8/8, with mean endpoint position RMSE **0.00794 Å**, mean absolute energy drift **60.16 kJ/mol**, mean wall time **0.0631 s**, and **10.64×** speed ratio to the fine energy-gradient teacher. Coarse Verlet L4 had **0.00250 Å**, **3.31 kJ/mol**, **0.2128 s**, and **3.05×**, respectively. The result closely matches the CPU accuracy finding. Notebook cells 29–33 contain the data preparation, training, evaluation, and diagnostic commands and outputs; the Colab VM checkpoints are ephemeral.
