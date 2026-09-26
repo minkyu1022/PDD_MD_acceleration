@@ -15,6 +15,81 @@ from .teacher import OpenMMTeacher, PhaseState
 from .train import _load, load_student, validate_teacher
 
 
+def _synchronize(device: str):
+    if device.startswith("cuda"):
+        torch.cuda.synchronize()
+    elif device.startswith("mps"):
+        torch.mps.synchronize()
+
+
+def benchmark_inference(
+    data_root: str,
+    pdd_checkpoint: str,
+    output: str,
+    block: int = 8,
+    fine_steps: int = 80,
+    batch_sizes: tuple[int, ...] = (1, 8, 32),
+    repeats: int = 3,
+    max_frames: int | None = None,
+    device: str = "cpu",
+):
+    """Measure block-endpoint rollout throughput over independent initial states."""
+    if block <= 0 or fine_steps <= 0 or fine_steps % block or repeats <= 0:
+        raise ValueError("block must divide fine_steps; repeats must be positive")
+    if not batch_sizes or any(size <= 0 for size in batch_sizes):
+        raise ValueError("batch sizes must be positive")
+    trajectory = load_ad3(data_root, "test", max_frames)
+    student, saved = load_student(pdd_checkpoint, device)
+    if block > saved["max_block"]:
+        raise ValueError("block exceeds trained max_block")
+    results = []
+    with torch.no_grad():
+        for size in batch_sizes:
+            indices = np.linspace(0, len(trajectory) - 1, num=size, dtype=int)
+            initial_q = torch.as_tensor(
+                trajectory.positions[indices], dtype=torch.float32, device=device
+            )
+            initial_v = torch.as_tensor(
+                trajectory.velocities[indices], dtype=torch.float32, device=device
+            )
+            elapsed = []
+            for repeat in range(repeats + 1):
+                q, v = initial_q, initial_v
+                _synchronize(device)
+                start = time.perf_counter()
+                for _ in range(fine_steps // block):
+                    q, v = student.advance_fused(q, v, block)
+                _synchronize(device)
+                if repeat:
+                    elapsed.append(time.perf_counter() - start)
+            median = float(np.median(elapsed))
+            results.append(
+                {
+                    "batch_size": size,
+                    "median_wall_seconds": median,
+                    "trajectories_per_second": size / median,
+                    "fine_steps_per_second": size * fine_steps / median,
+                    "endpoint_finite": bool(
+                        torch.isfinite(q).all().item()
+                        and torch.isfinite(v).all().item()
+                    ),
+                }
+            )
+    report = {
+        "checkpoint": pdd_checkpoint,
+        "device": device,
+        "block": block,
+        "fine_steps": fine_steps,
+        "repeats": repeats,
+        "results": results,
+    }
+    path = Path(output)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2))
+    print(json.dumps(report, indent=2), flush=True)
+    return report
+
+
 def evaluate_force(
     data_root: str,
     force_checkpoint: str,
@@ -83,20 +158,14 @@ def _student_rollout(
     q = torch.tensor(initial.q[None], dtype=torch.float32, device=device)
     v = torch.tensor(initial.v[None], dtype=torch.float32, device=device)
     q_history, v_history = [q], [v]
-    if device.startswith("cuda"):
-        torch.cuda.synchronize()
-    elif device.startswith("mps"):
-        torch.mps.synchronize()
+    _synchronize(device)
     start = time.perf_counter()
     with torch.no_grad():
         for _ in range(total_steps // block):
             q, v = student.advance_fused(q, v, block)
             q_history.append(q)
             v_history.append(v)
-    if device.startswith("cuda"):
-        torch.cuda.synchronize()
-    elif device.startswith("mps"):
-        torch.mps.synchronize()
+    _synchronize(device)
     elapsed = time.perf_counter() - start
     all_q = torch.cat(q_history, dim=0).cpu().numpy().astype(np.float64)
     all_v = torch.cat(v_history, dim=0).cpu().numpy().astype(np.float64)

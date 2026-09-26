@@ -6,7 +6,7 @@ import argparse
 import json
 
 from .data import download_ad3, load_ad3
-from .evaluate import evaluate, evaluate_force
+from .evaluate import benchmark_inference, evaluate, evaluate_force
 from .teacher import OpenMMTeacher
 from .train import train_direct, train_force, train_pdd, validate_teacher
 
@@ -87,6 +87,16 @@ def build_parser():
     test.add_argument("--max-frames", type=int)
     test.add_argument("--device", default="cpu")
     test.add_argument("--platform", default="CPU")
+    bench = commands.add_parser("benchmark")
+    bench.add_argument("--data-root", default="data")
+    bench.add_argument("--pdd-checkpoint", required=True)
+    bench.add_argument("--output", required=True)
+    bench.add_argument("--block", type=int, default=8)
+    bench.add_argument("--fine-steps", type=int, default=80)
+    bench.add_argument("--batch-sizes", type=int, nargs="+", default=[1, 8, 32])
+    bench.add_argument("--repeats", type=int, default=3)
+    bench.add_argument("--max-frames", type=int)
+    bench.add_argument("--device", default="cpu")
     return parser
 
 
@@ -124,6 +134,9 @@ def main(argv=None):
     elif name == "evaluate":
         kw["block_sizes"] = tuple(kw.pop("blocks"))
         evaluate(**kw)
+    elif name == "benchmark":
+        kw["batch_sizes"] = tuple(kw["batch_sizes"])
+        benchmark_inference(**kw)
 
 
 if __name__ == "__main__":

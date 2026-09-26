@@ -33,3 +33,6 @@ pdd-md evaluate --data-root "$DATA_ROOT" \
   --pdd-checkpoint "$RUN_ROOT/pdd.pt" --direct-checkpoint "$RUN_ROOT/direct_L8.pt" \
   --output "$RUN_ROOT/eval_40fs.json" --blocks 1 2 4 8 \
   --fine-steps 80 --samples "$SAMPLES" --device "$DEVICE" --platform "$PLATFORM"
+pdd-md benchmark --data-root "$DATA_ROOT" --pdd-checkpoint "$RUN_ROOT/pdd.pt" \
+  --output "$RUN_ROOT/throughput_L8.json" --block 8 --fine-steps 80 \
+  --batch-sizes 1 8 32 --device "$DEVICE"
