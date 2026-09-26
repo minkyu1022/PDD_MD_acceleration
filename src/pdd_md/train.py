@@ -11,7 +11,7 @@ import torch
 
 from .data import load_ad3, pdb_atomic_numbers_and_masses
 from .model import ParallelStudent, make_adapter
-from .teacher import OpenMMTeacher, PhaseState
+from .teacher import PhaseState, make_teacher, teacher_config
 
 
 def set_seed(seed: int):
@@ -62,8 +62,9 @@ def _resume_training(resume, kind, model, optimizer, rng, device, expected=None)
     if saved["kind"] != kind:
         raise ValueError(f"Cannot resume {kind} from {saved['kind']} checkpoint")
     for key, value in (expected or {}).items():
-        if saved[key] != value:
-            raise ValueError(f"Resume mismatch for {key}: {saved[key]} != {value}")
+        actual = saved.get(key, "openmm" if key == "teacher_backend" else None)
+        if actual != value:
+            raise ValueError(f"Resume mismatch for {key}: {actual} != {value}")
     key = "adapter" if kind == "force" else "student"
     model.load_state_dict(saved[key])
     _restore_optimizer(optimizer, saved, device)
@@ -111,13 +112,25 @@ def train_force(
     log_every: int = 50,
     save_every: int = 500,
     resume: str | None = None,
+    teacher_backend: str = "openmm",
+    teacher_checkpoint: str | None = None,
+    teacher_device: str | None = None,
 ):
     if label_source not in {"teacher", "ad3"}:
         raise ValueError("label_source must be teacher or ad3")
     set_seed(seed)
     trajectory = load_ad3(data_root, "train", max_frames)
     atomic_numbers, masses = _topology(trajectory)
-    teacher = OpenMMTeacher(trajectory.pdb_path, platform)
+    teacher_checkpoint = teacher_checkpoint or (
+        checkpoint if teacher_backend == "esen-energy" else None
+    )
+    teacher = make_teacher(
+        trajectory.pdb_path,
+        teacher_backend,
+        teacher_checkpoint,
+        platform,
+        teacher_device or device,
+    )
     consistency = validate_teacher(trajectory, teacher)
     print("teacher_consistency", json.dumps(consistency), flush=True)
     adapter = make_adapter(backend, atomic_numbers, checkpoint, hidden).to(device)
@@ -137,6 +150,8 @@ def train_force(
             "backend": backend,
             "atomic_numbers": atomic_numbers,
             "label_source": label_source,
+            "teacher_backend": teacher_backend,
+            "teacher_checkpoint": teacher_checkpoint,
         },
     )
 
@@ -154,6 +169,9 @@ def train_force(
             "iteration": iteration,
             "label_source": label_source,
             "teacher_consistency": consistency,
+            "teacher_backend": teacher_backend,
+            "teacher_checkpoint": teacher_checkpoint,
+            "teacher_device": teacher_device,
             "history": history,
             "seed": seed,
         }
@@ -249,6 +267,9 @@ def train_pdd(
     log_every: int = 50,
     save_every: int = 500,
     resume: str | None = None,
+    teacher_backend: str | None = None,
+    teacher_checkpoint: str | None = None,
+    teacher_device: str | None = None,
 ):
     set_seed(seed)
     trajectory = load_ad3(data_root, "train", max_frames)
@@ -257,8 +278,17 @@ def train_pdd(
     dt_ps = 0.0005 if dt_ps is None else dt_ps
     if any(not 1 <= x <= max_block for x in block_sizes):
         raise ValueError("block sizes must be between one and max_block")
-    teacher = OpenMMTeacher(trajectory.pdb_path, platform)
     student, warm = _student_from_force(force_checkpoint, max_block, dt_ps, device)
+    inherited = teacher_config(warm, device)
+    teacher_backend = teacher_backend or inherited["backend"]
+    teacher_checkpoint = teacher_checkpoint or inherited["checkpoint"]
+    teacher = make_teacher(
+        trajectory.pdb_path,
+        teacher_backend,
+        teacher_checkpoint,
+        platform,
+        teacher_device or device,
+    )
     if list(warm["atomic_numbers"]) != _topology(trajectory)[0]:
         raise ValueError("Warm-start checkpoint and AD-3 topology differ")
     student.train()
@@ -273,7 +303,13 @@ def train_pdd(
         optimizer,
         rng,
         device,
-        {"max_block": max_block, "dt_ps": dt_ps, "block_sizes": list(block_sizes)},
+        {
+            "max_block": max_block,
+            "dt_ps": dt_ps,
+            "block_sizes": list(block_sizes),
+            "teacher_backend": teacher_backend,
+            "teacher_checkpoint": teacher_checkpoint,
+        },
     )
 
     def snapshot(iteration):
@@ -295,6 +331,9 @@ def train_pdd(
             "velocity_scale": velocity_scale,
             "accel_scale": accel_scale,
             "force_checkpoint": str(force_checkpoint),
+            "teacher_backend": teacher_backend,
+            "teacher_checkpoint": teacher_checkpoint,
+            "teacher_device": teacher_device,
             "history": history,
             "seed": seed,
         }
@@ -363,14 +402,26 @@ def train_direct(
     log_every: int = 50,
     save_every: int = 500,
     resume: str | None = None,
+    teacher_backend: str | None = None,
+    teacher_checkpoint: str | None = None,
+    teacher_device: str | None = None,
 ):
     """Equal-backbone one-forward coarse transition comparison model."""
     set_seed(seed)
     trajectory = load_ad3(data_root, "train", max_frames)
     fine_dt = dt_ps
-    teacher = OpenMMTeacher(trajectory.pdb_path, platform)
     student, warm = _student_from_force(
         force_checkpoint, 1, fine_dt * coarse_factor, device
+    )
+    inherited = teacher_config(warm, device)
+    teacher_backend = teacher_backend or inherited["backend"]
+    teacher_checkpoint = teacher_checkpoint or inherited["checkpoint"]
+    teacher = make_teacher(
+        trajectory.pdb_path,
+        teacher_backend,
+        teacher_checkpoint,
+        platform,
+        teacher_device or device,
     )
     student.train()
     optimizer = torch.optim.AdamW(
@@ -384,7 +435,12 @@ def train_direct(
         optimizer,
         rng,
         device,
-        {"coarse_factor": coarse_factor, "dt_ps": fine_dt * coarse_factor},
+        {
+            "coarse_factor": coarse_factor,
+            "dt_ps": fine_dt * coarse_factor,
+            "teacher_backend": teacher_backend,
+            "teacher_checkpoint": teacher_checkpoint,
+        },
     )
 
     def snapshot(iteration):
@@ -402,6 +458,9 @@ def train_direct(
             "max_block": 1,
             "dt_ps": fine_dt * coarse_factor,
             "coarse_factor": coarse_factor,
+            "teacher_backend": teacher_backend,
+            "teacher_checkpoint": teacher_checkpoint,
+            "teacher_device": teacher_device,
             "history": history,
             "seed": seed,
         }

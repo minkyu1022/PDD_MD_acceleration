@@ -43,6 +43,13 @@ def build_parser():
         command.add_argument("--max-frames", type=int)
         command.add_argument("--device", default="cpu")
         command.add_argument("--platform", default="CPU")
+        command.add_argument(
+            "--teacher-backend",
+            choices=["openmm", "esen-energy"],
+            default="openmm" if name == "train-force" else None,
+        )
+        command.add_argument("--teacher-checkpoint")
+        command.add_argument("--teacher-device")
         command.add_argument("--seed", type=int, default=7)
         command.add_argument("--log-every", type=int, default=50)
         command.add_argument("--save-every", type=int, default=500)
@@ -99,7 +106,8 @@ def build_parser():
     bench.add_argument("--max-frames", type=int)
     bench.add_argument("--device", default="cpu")
     diagnose = commands.add_parser(
-        "diagnose", help="Measure first inaccurate rollout horizon and fused-head agreement"
+        "diagnose",
+        help="Measure first inaccurate rollout horizon and fused-head agreement",
     )
     diagnose.add_argument("--data-root", default="data")
     diagnose.add_argument("--pdd-checkpoint", required=True)

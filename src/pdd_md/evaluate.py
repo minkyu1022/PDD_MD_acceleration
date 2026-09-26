@@ -11,7 +11,7 @@ import torch
 
 from .data import load_ad3
 from .model import make_adapter
-from .teacher import OpenMMTeacher, PhaseState
+from .teacher import PhaseState, make_teacher, teacher_config
 from .train import _load, load_student, validate_teacher
 
 
@@ -104,10 +104,12 @@ def evaluate_force(
     if samples <= 0 or batch_size <= 0:
         raise ValueError("samples and batch_size must be positive")
     trajectory = load_ad3(data_root, "test", max_frames)
-    teacher = OpenMMTeacher(trajectory.pdb_path, platform)
     saved = _load(force_checkpoint)
     if saved["kind"] != "force":
         raise ValueError("Expected a force warm-start checkpoint")
+    teacher = make_teacher(
+        trajectory.pdb_path, platform=platform, **teacher_config(saved, device)
+    )
     adapter = make_adapter(
         saved["backend"],
         saved["atomic_numbers"],
@@ -134,6 +136,7 @@ def evaluate_force(
         "force_checkpoint": force_checkpoint,
         "device": device,
         "openmm_platform": platform,
+        "teacher_backend": saved.get("teacher_backend", "openmm"),
         "torch_version": torch.__version__,
         "test_frames": len(trajectory),
         "test_indices": indices.tolist(),
@@ -176,20 +179,13 @@ def _student_rollout(
 def _coarse_verlet_rollout(teacher, initial, total_steps, block, dt_ps):
     import openmm
 
-    states = [initial]
-    current = initial
-    for _ in range(total_steps // block):
-        try:
-            current = teacher.step(current, block * dt_ps)
-        except openmm.OpenMMException:
-            current = PhaseState(
-                np.full_like(initial.q, np.nan), np.full_like(initial.v, np.nan)
-            )
-        states.append(current)
-        if not _finite_states([current]):
-            states.extend([current] * (total_steps // block - len(states) + 1))
-            break
-    return states
+    try:
+        return teacher.rollout(initial, total_steps // block, block * dt_ps)
+    except openmm.OpenMMException:
+        invalid = PhaseState(
+            np.full_like(initial.q, np.nan), np.full_like(initial.v, np.nan)
+        )
+        return [initial] + [invalid] * (total_steps // block)
 
 
 def _compare(student_states, teacher_states, stride=1):
@@ -260,8 +256,10 @@ def evaluate(
     if fine_steps <= 0 or samples <= 0:
         raise ValueError("fine_steps and samples must be positive")
     trajectory = load_ad3(data_root, "test", max_frames)
-    teacher = OpenMMTeacher(trajectory.pdb_path, platform)
     student, saved = load_student(pdd_checkpoint, device)
+    teacher = make_teacher(
+        trajectory.pdb_path, platform=platform, **teacher_config(saved, device)
+    )
     if saved["backend"] == "esen":
         student.eval()
     dt_ps = saved["dt_ps"]
@@ -279,6 +277,10 @@ def evaluate(
         direct_saved["dt_ps"], dt_ps * direct_saved["coarse_factor"]
     ):
         raise ValueError("Direct checkpoint coarse dt does not match PDD dt")
+    if direct and direct_saved.get("teacher_backend", "openmm") != saved.get(
+        "teacher_backend", "openmm"
+    ):
+        raise ValueError("Direct and PDD checkpoints use different teachers")
     indices = np.linspace(
         0, len(trajectory) - 1, num=min(samples, len(trajectory)), dtype=int
     )
@@ -287,6 +289,7 @@ def evaluate(
         "direct_checkpoint": direct_checkpoint,
         "device": device,
         "openmm_platform": platform,
+        "teacher_backend": saved.get("teacher_backend", "openmm"),
         "torch_version": torch.__version__,
         "test_frames": len(trajectory),
         "test_initial_indices": indices.tolist(),

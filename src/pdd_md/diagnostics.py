@@ -12,7 +12,7 @@ import torch
 from .data import load_ad3
 from .evaluate import _synchronize
 from .model import ESENEnergyGradient
-from .teacher import OpenMMTeacher, PhaseState
+from .teacher import PhaseState, make_teacher, teacher_config
 from .train import load_student
 from .units import ACCEL_PER_FORCE_PER_DALTON
 
@@ -46,7 +46,9 @@ def diagnose_rollout(
     student, saved = load_student(pdd_checkpoint, device)
     if block > saved["max_block"]:
         raise ValueError("block exceeds the checkpoint's max_block")
-    teacher = OpenMMTeacher(trajectory.pdb_path, platform)
+    teacher = make_teacher(
+        trajectory.pdb_path, platform=platform, **teacher_config(saved, device)
+    )
     indices = np.linspace(
         0, len(trajectory) - 1, num=min(samples, len(trajectory)), dtype=int
     )
@@ -65,9 +67,7 @@ def diagnose_rollout(
                 {
                     "initial_index": int(index),
                     "q_max_abs_angstrom": float((plain_q - fused_q).abs().max()),
-                    "v_max_abs_angstrom_per_ps": float(
-                        (plain_v - fused_v).abs().max()
-                    ),
+                    "v_max_abs_angstrom_per_ps": float((plain_v - fused_v).abs().max()),
                 }
             )
             first_over_0p1 = None
@@ -86,9 +86,7 @@ def diagnose_rollout(
                     if finite
                     else None
                 )
-                if first_over_0p1 is None and (
-                    q_error is None or q_error > 0.1
-                ):
+                if first_over_0p1 is None and (q_error is None or q_error > 0.1):
                     first_over_0p1 = fine_step
                 if not finite:
                     first_nonfinite = fine_step
@@ -141,8 +139,7 @@ def diagnose_rollout(
             "q_error_over_0p1_angstrom_fraction": float(
                 np.mean(
                     [
-                        r["q_rmse_angstrom"] is None
-                        or r["q_rmse_angstrom"] > 0.1
+                        r["q_rmse_angstrom"] is None or r["q_rmse_angstrom"] > 0.1
                         for r in selected
                     ]
                 )
@@ -157,9 +154,7 @@ def diagnose_rollout(
             "block": block,
             "dt_ps": saved["dt_ps"],
             "initial_indices": indices.tolist(),
-            "fusion_max_q_abs_angstrom": max(
-                r["q_max_abs_angstrom"] for r in fusion
-            ),
+            "fusion_max_q_abs_angstrom": max(r["q_max_abs_angstrom"] for r in fusion),
             "fusion_max_v_abs_angstrom_per_ps": max(
                 r["v_max_abs_angstrom_per_ps"] for r in fusion
             ),
@@ -207,12 +202,12 @@ def benchmark_mlip(
     student, saved = load_student(pdd_checkpoint, device)
     if saved["backend"] != "esen" or block > saved["max_block"]:
         raise ValueError("Benchmark requires an eSEN PDD checkpoint and valid block")
-    energy_model = ESENEnergyGradient(
-        saved["atomic_numbers"], saved["checkpoint"]
-    ).to(device).eval()
-    masses = torch.as_tensor(
-        saved["masses_dalton"], dtype=torch.float32, device=device
+    energy_model = (
+        ESENEnergyGradient(saved["atomic_numbers"], saved["checkpoint"])
+        .to(device)
+        .eval()
     )
+    masses = torch.as_tensor(saved["masses_dalton"], dtype=torch.float32, device=device)
     results = []
     for size in batch_sizes:
         indices = np.linspace(0, len(trajectory) - 1, num=size, dtype=int)

@@ -9,6 +9,7 @@ import numpy as np
 
 from .units import (
     ACCEL_PER_FORCE_PER_DALTON,
+    KJ_MOL_NM_PER_EV_ANGSTROM,
     NM_TO_ANGSTROM,
     force_kj_mol_nm_to_ev_angstrom,
 )
@@ -113,8 +114,18 @@ class OpenMMTeacher:
                 np.asarray(state.v, dtype=np.float64).copy(),
             )
         ]
+        if steps <= 0:
+            return states
+        if dt_ps <= 0:
+            raise ValueError("dt_ps must be positive")
+        acceleration = self.acceleration(states[0].q)
         for _ in range(steps):
-            states.append(self.step(states[-1], dt_ps))
+            current = states[-1]
+            v_half = current.v + 0.5 * dt_ps * acceleration
+            next_q = current.q + dt_ps * v_half
+            acceleration = self.acceleration(next_q)
+            next_v = v_half + 0.5 * dt_ps * acceleration
+            states.append(PhaseState(next_q, next_v))
         return states
 
     def total_energy(self, state: PhaseState):
@@ -126,3 +137,61 @@ class OpenMMTeacher:
     def close(self):
         del self.context
         del self.integrator
+
+
+class ESENEnergyTeacher(OpenMMTeacher):
+    """Velocity Verlet on the pretrained eSEN energy surface."""
+
+    def __init__(self, pdb_path: str | Path, checkpoint: str, device: str = "cpu"):
+        import torch
+
+        from .data import pdb_atomic_numbers_and_masses
+        from .model import ESENEnergyGradient
+
+        atomic_numbers, self.masses = pdb_atomic_numbers_and_masses(pdb_path)
+        self.natoms = len(self.masses)
+        self.device = device
+        self.model = ESENEnergyGradient(atomic_numbers.tolist(), checkpoint).to(device)
+        self.model.eval()
+        self.force_calls = 0
+        self._torch = torch
+
+    def force_and_potential(self, q_angstrom: np.ndarray):
+        q = np.asarray(q_angstrom, dtype=np.float32)
+        if q.shape != (self.natoms, 3):
+            raise ValueError(f"Expected positions [{self.natoms},3], got {q.shape}")
+        tensor = self._torch.as_tensor(q[None], device=self.device)
+        energy, force = self.model.energy_and_force(tensor)
+        self.force_calls += 1
+        # eV to kJ/mol; element-reference constants cancel from force and drift.
+        energy_kj_mol = float(energy[0].cpu()) * (
+            KJ_MOL_NM_PER_EV_ANGSTROM / NM_TO_ANGSTROM
+        )
+        return force[0].cpu().numpy().astype(np.float64), energy_kj_mol
+
+    def close(self):
+        del self.model
+
+
+def make_teacher(
+    pdb_path: str | Path,
+    backend: str = "openmm",
+    checkpoint: str | None = None,
+    platform: str = "CPU",
+    device: str = "cpu",
+):
+    if backend == "openmm":
+        return OpenMMTeacher(pdb_path, platform)
+    if backend == "esen-energy":
+        if not checkpoint:
+            raise ValueError("esen-energy teacher requires --teacher-checkpoint")
+        return ESENEnergyTeacher(pdb_path, checkpoint, device)
+    raise ValueError(f"Unknown teacher backend: {backend}")
+
+
+def teacher_config(saved: dict, device: str = "cpu") -> dict:
+    return {
+        "backend": saved.get("teacher_backend", "openmm"),
+        "checkpoint": saved.get("teacher_checkpoint"),
+        "device": saved.get("teacher_device") or device,
+    }

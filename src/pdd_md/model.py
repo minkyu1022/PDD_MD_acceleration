@@ -158,11 +158,7 @@ class ESENAdapter(nn.Module):
 
 
 class ESENEnergyGradient(nn.Module):
-    """Force from the OMol energy head of the same pretrained eSEN checkpoint.
-
-    This is a compute baseline. Its OMol potential is different from the
-    OpenMM potential used to train the current PDD checkpoints.
-    """
+    """Energy and differentiated force from a pretrained OMol eSEN checkpoint."""
 
     _atomic_data = ESENAdapter._atomic_data
 
@@ -196,7 +192,7 @@ class ESENEnergyGradient(nn.Module):
             "atomic_numbers", torch.tensor(atomic_numbers, dtype=torch.long)
         )
 
-    def force(self, q: torch.Tensor) -> torch.Tensor:
+    def energy_and_force(self, q: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         # Element-reference energies depend only on species, so they have zero
         # position derivative and need not be added for a force calculation.
         with torch.enable_grad():
@@ -204,8 +200,12 @@ class ESENEnergyGradient(nn.Module):
             data = self._atomic_data(pos)
             embedding = self.backbone(data)
             raw_energy = self.energy_head(data, embedding)["energy"]
-            energy = self.energy_normalizer.denorm(raw_energy).sum()
-            return -torch.autograd.grad(energy, pos)[0].detach()
+            energies = self.energy_normalizer.denorm(raw_energy).reshape(-1)
+            forces = -torch.autograd.grad(energies.sum(), pos)[0]
+            return energies.detach(), forces.detach()
+
+    def force(self, q: torch.Tensor) -> torch.Tensor:
+        return self.energy_and_force(q)[1]
 
 
 class TinyForceHead(nn.Module):

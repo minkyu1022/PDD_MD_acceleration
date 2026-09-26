@@ -95,6 +95,18 @@ The [failure-horizon and eSEN compute diagnostic](results/diagnostics_2026-09-26
 
 The [Colab T4 eSEN compute benchmark](results/colab_t4_mlip_compute_2026-09-26.md) measured roughly 9–10× less inference time for PDD L4 than for energy-gradient eSEN at matched simulated step counts. PDD's 80-step endpoints were nonfinite in that measurement, and it was trained on a different potential; the result is a compute diagnostic only.
 
+For a **same-potential** experiment, `--teacher-backend esen-energy` differentiates the energy head of the specified eSEN checkpoint at every teacher step. The force warm-start checkpoint records this choice; `train-pdd`, `train-direct`, `evaluate`, `evaluate-force`, and `diagnose` then inherit it. AD-3 supplies initial states only. Example after downloading AD-3 and the eSEN checkpoint:
+
+The [same-potential CPU pilot](results/same_potential_2026-09-26.md) establishes that this path runs and measures short- and longer-horizon errors against the eSEN energy-gradient teacher.
+
+```bash
+pdd-md train-force --backend esen --checkpoint data/esen/checkpoints/esen_sm_direct_all.pt --teacher-backend esen-energy --data-root data --output runs/esen-energy/force.pt --steps 200 --device cuda
+pdd-md train-pdd --data-root data --force-checkpoint runs/esen-energy/force.pt --output runs/esen-energy/pdd.pt --max-block 4 --block-sizes 1 2 4 --steps 200 --device cuda
+pdd-md evaluate --data-root data --pdd-checkpoint runs/esen-energy/pdd.pt --output runs/esen-energy/eval.json --fine-steps 80 --blocks 1 2 4 --device cuda
+```
+
+The eSEN energy head was pretrained on OMol configurations, not generated as an MD stability guarantee for AD-3. Check trajectory accuracy and energy drift before interpreting any speed ratio.
+
 ```bash
 pdd-md diagnose --data-root data --pdd-checkpoint runs/esen/pdd.pt --output runs/esen/diagnose.json --block 4 --horizons 4 8 20 40 80 --samples 8 --device cuda
 pdd-md benchmark-mlip --data-root data --pdd-checkpoint runs/esen/pdd.pt --output runs/esen/benchmark_mlip.json --block 4 --fine-steps 80 --batch-sizes 1 8 32 --device cuda

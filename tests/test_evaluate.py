@@ -40,7 +40,7 @@ def test_failed_coarse_integrator_keeps_comparison_grid():
     from openmm import OpenMMException
 
     class FailedTeacher:
-        def step(self, state, dt):
+        def rollout(self, state, steps, dt):
             raise OpenMMException("unstable integration")
 
     initial = PhaseState(np.zeros((1, 3)), np.zeros((1, 3)))
