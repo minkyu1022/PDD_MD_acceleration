@@ -157,6 +157,57 @@ class ESENAdapter(nn.Module):
         return self.apply_force_head(self.force_head, self.encode(q))
 
 
+class ESENEnergyGradient(nn.Module):
+    """Force from the OMol energy head of the same pretrained eSEN checkpoint.
+
+    This is a compute baseline. Its OMol potential is different from the
+    OpenMM potential used to train the current PDD checkpoints.
+    """
+
+    _atomic_data = ESENAdapter._atomic_data
+
+    def __init__(self, atomic_numbers: list[int], checkpoint: str):
+        super().__init__()
+        from fairchem.core.calculate import pretrained_mlip
+        from fairchem.core.units.mlip_unit.utils import load_inference_model
+
+        path = (
+            checkpoint
+            if Path(checkpoint).is_file()
+            else pretrained_mlip.pretrained_checkpoint_path_from_name(checkpoint)
+        )
+        loaded, ckpt = load_inference_model(path, use_ema=True)
+        model = loaded.module if hasattr(loaded, "module") else loaded
+        model.setup_tasks(ckpt.tasks_config)
+        if "energy" not in model.output_heads:
+            raise KeyError("The eSEN checkpoint has no energy head")
+        self.backbone = model.backbone
+        self.backbone.always_use_pbc = False
+        self.energy_head = model.output_heads["energy"]
+        tasks = [
+            task
+            for task in model.tasks.values()
+            if task.property == "energy" and "omol" in task.datasets
+        ]
+        if len(tasks) != 1:
+            raise ValueError(f"Expected one OMol energy task, found {len(tasks)}")
+        self.energy_normalizer = deepcopy(tasks[0].normalizer)
+        self.register_buffer(
+            "atomic_numbers", torch.tensor(atomic_numbers, dtype=torch.long)
+        )
+
+    def force(self, q: torch.Tensor) -> torch.Tensor:
+        # Element-reference energies depend only on species, so they have zero
+        # position derivative and need not be added for a force calculation.
+        with torch.enable_grad():
+            pos = q.detach().requires_grad_(True)
+            data = self._atomic_data(pos)
+            embedding = self.backbone(data)
+            raw_energy = self.energy_head(data, embedding)["energy"]
+            energy = self.energy_normalizer.denorm(raw_energy).sum()
+            return -torch.autograd.grad(energy, pos)[0].detach()
+
+
 class TinyForceHead(nn.Module):
     """Small rotation-equivariant vector head for local tests and ablations."""
 

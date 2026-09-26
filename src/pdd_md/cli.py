@@ -6,6 +6,7 @@ import argparse
 import json
 
 from .data import download_ad3, load_ad3
+from .diagnostics import benchmark_mlip, diagnose_rollout
 from .evaluate import benchmark_inference, evaluate, evaluate_force
 from .teacher import OpenMMTeacher
 from .train import train_direct, train_force, train_pdd, validate_teacher
@@ -97,6 +98,30 @@ def build_parser():
     bench.add_argument("--repeats", type=int, default=3)
     bench.add_argument("--max-frames", type=int)
     bench.add_argument("--device", default="cpu")
+    diagnose = commands.add_parser(
+        "diagnose", help="Measure first inaccurate rollout horizon and fused-head agreement"
+    )
+    diagnose.add_argument("--data-root", default="data")
+    diagnose.add_argument("--pdd-checkpoint", required=True)
+    diagnose.add_argument("--output", required=True)
+    diagnose.add_argument("--horizons", type=int, nargs="+", default=[4, 8, 20, 40, 80])
+    diagnose.add_argument("--block", type=int, default=4)
+    diagnose.add_argument("--samples", type=int, default=8)
+    diagnose.add_argument("--max-frames", type=int)
+    diagnose.add_argument("--platform", default="CPU")
+    diagnose.add_argument("--device", default="cpu")
+    mlip_bench = commands.add_parser(
+        "benchmark-mlip", help="Compare PDD compute with eSEN energy-gradient Verlet"
+    )
+    mlip_bench.add_argument("--data-root", default="data")
+    mlip_bench.add_argument("--pdd-checkpoint", required=True)
+    mlip_bench.add_argument("--output", required=True)
+    mlip_bench.add_argument("--block", type=int, default=4)
+    mlip_bench.add_argument("--fine-steps", type=int, default=8)
+    mlip_bench.add_argument("--batch-sizes", type=int, nargs="+", default=[1, 8])
+    mlip_bench.add_argument("--repeats", type=int, default=3)
+    mlip_bench.add_argument("--max-frames", type=int)
+    mlip_bench.add_argument("--device", default="cpu")
     return parser
 
 
@@ -137,6 +162,12 @@ def main(argv=None):
     elif name == "benchmark":
         kw["batch_sizes"] = tuple(kw["batch_sizes"])
         benchmark_inference(**kw)
+    elif name == "diagnose":
+        kw["horizons"] = tuple(kw["horizons"])
+        diagnose_rollout(**kw)
+    elif name == "benchmark-mlip":
+        kw["batch_sizes"] = tuple(kw["batch_sizes"])
+        benchmark_mlip(**kw)
 
 
 if __name__ == "__main__":
