@@ -2,6 +2,8 @@
 
 An executable experiment adapting [Parallel Decoding Distillation](https://arxiv.org/abs/2607.26004) to 22-atom alanine dipeptide. One shared MLIP backbone and several cloned direct-force heads predict the mean phase-space velocities of consecutive MD intervals in one backbone evaluation. The primary student is **OMol25 eSEN-sm-direct**; a small built-in equivariant model is provided for end-to-end smoke tests and an architecture ablation.
 
+**Continuing on a GPU server?** Start with the [server experiment guide](docs/SERVER_EXPERIMENT_GUIDE.md). It states what currently runs on one GPU, what must be implemented for four-GPU training, the same-potential commands, data/model access, validation policy, baselines, metrics, and decision gates.
+
 ## What this experiment tests
 
 We test whether a student can replace (L) evaluations of a deterministic fine-step teacher with one evaluation while following its short trajectory. Let (z=(q,v)), with (q) in Å and (v) in Å/ps. The teacher map (Phi_h(z)) is an OpenMM velocity-Verlet step of (h=0.0005) ps by default. The student returns (L) predictions ((\bar{\dot q}_k,\bar{\dot v}_k)) from the *same initial state* and a single shared eSEN backbone evaluation. Its internal states are cumulative sums of those predictions. At training time, we select a random internal step (k), evaluate the teacher map at the **student-produced state** with stop-gradient, and regress the corresponding head toward
@@ -74,7 +76,7 @@ pdd-md evaluate --data-root data --pdd-checkpoint runs/smoke/pdd.pt --direct-che
 
 Run on a CUDA machine after eSEN checkpoint access is approved. This is a starting budget; increase the number of iterations after measuring learning curves and held-out results.
 
-`bash scripts/run_experiment.sh` runs download, force adaptation, held-out force check, PDD training, direct baseline training, trajectory evaluation, and batched inference benchmarking in order. Set `RUN_ROOT`, `DEVICE`, `FORCE_STEPS`, `STUDENT_STEPS`, and batch-size environment variables to change the default budget.
+`bash scripts/run_experiment.sh` runs download, force adaptation, held-out force check, PDD training, direct baseline training, trajectory evaluation, and batched inference benchmarking in order. **This script defaults to an OpenMM teacher**; use the [server guide](docs/SERVER_EXPERIMENT_GUIDE.md) for the eSEN energy-gradient same-potential experiment. Set `RUN_ROOT`, `DEVICE`, `FORCE_STEPS`, `STUDENT_STEPS`, and batch-size environment variables to change the script's default budget.
 
 ```bash
 pdd-md train-force --backend esen --data-root data --output runs/esen/force.pt --steps 5000 --batch-size 16 --device cuda --platform CPU
