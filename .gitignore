@@ -1,4 +1,5 @@
 .venv/
+.venv-oc20/
 .uv-cache/
 .hf-cache/
 *.egg-info/

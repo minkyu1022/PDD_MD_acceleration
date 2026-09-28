@@ -4,7 +4,7 @@ An executable experiment adapting [Parallel Decoding Distillation](https://arxiv
 
 **Continuing on a GPU server?** Start with the [server experiment guide](docs/SERVER_EXPERIMENT_GUIDE.md). It states what currently runs on one GPU, what must be implemented for four-GPU training, the same-potential commands, data/model access, validation policy, baselines, metrics, and decision gates.
 
-**Considering relaxation instead of MD?** The [OC20 relaxation research note](docs/RELAXATION_RESEARCH_NOTE.md) covers data size and access, the MLIP teacher definition, model choices, fair baselines, metrics, and a four-GPU pilot.
+**Considering relaxation instead of MD?** The [OC20 relaxation research note](docs/RELAXATION_RESEARCH_NOTE.md) covers data, model choices, fair baselines, metrics, and a four-GPU pilot. The [first OC20 trajectory PoC](results/relaxation_oc20_poc_2026-09-28.md) uses the released DFT paths directly and records what its offline block-prediction result does and does not establish.
 
 ## What this experiment tests
 
