@@ -17,7 +17,7 @@ import torch
 from ase import Atoms
 from ase.calculators.calculator import Calculator
 from ase.constraints import FixAtoms
-from ase.optimize import FIRE
+from ase.optimize import FIRE, LBFGS
 from fairchem.core import OCPCalculator
 from relaxation_poc import EquivariantBlock
 
@@ -63,7 +63,7 @@ def move(atoms: Atoms, model: EquivariantBlock, force: np.ndarray, free: np.ndar
     return max_move
 
 
-def run_method(entry, root: Path, underlying, method: str, student, fmax: float, max_steps: int, guard_ev: float, proposal_blocks: int = 1, proposal_force_source: str = "mlip"):
+def run_method(entry, root: Path, underlying, method: str, student, fmax: float, max_steps: int, guard_ev: float, proposal_blocks: int = 1, proposal_force_source: str = "mlip", optimizer_name: str = "lbfgs", lbfgs_maxstep: float = 0.2, lbfgs_memory: int = 100, lbfgs_alpha: float = 70.0):
     with np.load(root / entry["path"], allow_pickle=False) as data:
         free = data["free"].copy()
         dft_force = data["forces"][0].copy()
@@ -99,7 +99,12 @@ def run_method(entry, root: Path, underlying, method: str, student, fmax: float,
             accepted_blocks += 1
             current_energy = proposal_energy
             current_force = atoms.get_forces(apply_constraint=False)
-    optimizer = FIRE(atoms, logfile=None)
+    if optimizer_name == "lbfgs":
+        optimizer = LBFGS(atoms, logfile=None, maxstep=lbfgs_maxstep, memory=lbfgs_memory, alpha=lbfgs_alpha)
+    elif optimizer_name == "fire":
+        optimizer = FIRE(atoms, logfile=None)
+    else:
+        raise ValueError(f"Unknown optimizer: {optimizer_name}")
     optimizer.run(fmax=fmax, steps=max_steps)
     final_force = atoms.get_forces()
     final_fmax = float(np.max(np.linalg.norm(final_force[free], axis=-1)))
@@ -114,6 +119,7 @@ def run_method(entry, root: Path, underlying, method: str, student, fmax: float,
     return {
         "sid": entry["sid"],
         "method": method,
+        "optimizer": optimizer_name,
         "proposal_force_source": proposal_force_source if student is not None else None,
         "atoms": len(atoms),
         "free_atoms": int(free.sum()),
@@ -144,10 +150,14 @@ def main():
     parser.add_argument("--output", required=True)
     parser.add_argument("--systems", type=int, default=8)
     parser.add_argument("--fmax", type=float, default=0.05)
-    parser.add_argument("--max-steps", type=int, default=60)
+    parser.add_argument("--max-steps", type=int, default=150)
     parser.add_argument("--guard-ev", type=float, default=0.1)
     parser.add_argument("--proposal-blocks", type=int, default=1)
     parser.add_argument("--proposal-force-source", choices=("mlip", "dft"), default="mlip")
+    parser.add_argument("--optimizer", choices=("lbfgs", "fire"), default="lbfgs")
+    parser.add_argument("--lbfgs-maxstep", type=float, default=0.2)
+    parser.add_argument("--lbfgs-memory", type=int, default=100)
+    parser.add_argument("--lbfgs-alpha", type=float, default=70.0)
     parser.add_argument("--threads", type=int, default=4)
     args = parser.parse_args()
     torch.set_num_threads(args.threads)
@@ -156,14 +166,15 @@ def main():
     selected = [e for e in manifest["systems"] if e["split"] == "validation"][: args.systems]
     if len(selected) < args.systems:
         raise ValueError("Not enough validation systems")
-    models = {"FIRE": None, "PDD4+FIRE": load_student(args.multi_head), "direct4+FIRE": load_student(args.direct_endpoint)}
+    label = args.optimizer.upper()
+    models = {label: None, f"PDD4+{label}": load_student(args.multi_head), f"direct4+{label}": load_student(args.direct_endpoint)}
     underlying = OCPCalculator(checkpoint_path=args.checkpoint, cpu=True, seed=42)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     rows = []
     for entry in selected:
         for name, model in models.items():
-            result = run_method(entry, root, underlying, name, model, args.fmax, args.max_steps, args.guard_ev, args.proposal_blocks, args.proposal_force_source)
+            result = run_method(entry, root, underlying, name, model, args.fmax, args.max_steps, args.guard_ev, args.proposal_blocks, args.proposal_force_source, args.optimizer, args.lbfgs_maxstep, args.lbfgs_memory, args.lbfgs_alpha)
             rows.append(result)
             print(json.dumps(result), flush=True)
             temporary = output.with_suffix(output.suffix + ".tmp")

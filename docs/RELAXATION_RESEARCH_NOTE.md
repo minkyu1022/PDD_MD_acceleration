@@ -78,4 +78,4 @@ OMol eSEN 체크포인트를 OC20 슬랩에 그대로 적용하지 않는다. �
 
 ## 실행된 첫 PoC
 
-[OC20 `*H` PoC 결과](../results/relaxation_oc20_poc_2026-09-28.md)는 공식 궤적 1,000개를 사용해 DFT 경로의 4-step 내부 좌표를 다중 head가 예측할 수 있는지 시험한다. 먼저 저장된 **DFT force**를 MLIP force의 대용 입력으로 학습했고, 뒤이어 공개 GemNet-OC-2M force로 8개 계의 실제 FIRE refinement를 실행했다. 한 블록 제안은 전체 MLIP 호출을 줄이지 못했다(기본 FIRE 272회, PDD+FIRE 274회). 두 블록 제안은 231회로 줄였지만 한 계가 더 높은 에너지와 다른 흡착 위치에 수렴했다. 그러므로 품질을 유지한 가속은 아직 입증되지 않았다. 학생은 작은 새 backbone이며 원 PDD의 student-state on-policy target과 pretrained GemNet head 복제는 아직 적용하지 않았다.
+[OC20 `*H` PoC 결과](../results/relaxation_oc20_poc_2026-09-28.md)는 공식 궤적 1,000개를 사용해 DFT 경로의 4-step 내부 좌표를 다중 head가 예측할 수 있는지 시험한다. 먼저 저장된 **DFT force**를 MLIP force의 대용 입력으로 학습했고, 뒤이어 공개 GemNet-OC-2M force로 8개 계의 실제 MLIP refinement를 실행했다. 처음에는 FIRE를 기준으로 썼으나, LBFGS로 다시 측정한 한 블록 실험에서 GemNet 호출이 기준 234회, PDD+LBFGS 207회, 직접 endpoint+LBFGS 213회였다. 두 블록에서는 각각 234/198/220회였고, 모든 방법이 8/8 수렴했다. 이 작은 CPU 표본만으로 견고한 가속이나 다중 head의 독자적인 이득을 입증할 수 없다. 학생은 작은 새 backbone이며 원 PDD의 student-state on-policy target과 pretrained GemNet head 복제는 아직 적용하지 않았다.

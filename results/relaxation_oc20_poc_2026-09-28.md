@@ -1,6 +1,6 @@
 # OC20 DFT 경로를 이용한 relaxation 블록 예측 PoC
 
-2026-09-28. **결과 범위:** 실제 OC20 DFT relaxation 궤적에서 4개 내부 구조를 한 번의 모델 평가로 예측하는 오프라인 실험과, 공개 사전학습 GemNet-OC로 한 번의 블록 제안 후 FIRE refinement를 시험한 소규모 CPU 진단이다. GPU 규모의 relaxation 가속 결과는 아니다.
+2026-09-28. **결과 범위:** 실제 OC20 DFT relaxation 궤적에서 4개 내부 구조를 한 번의 모델 평가로 예측하는 오프라인 실험과, 공개 사전학습 GemNet-OC로 블록 제안 후 LBFGS refinement를 시험한 소규모 CPU 진단이다. 앞선 FIRE 결과도 참고용으로 남긴다. GPU 규모의 relaxation 가속 결과는 아니다.
 
 ## 데이터와 재현
 
@@ -41,11 +41,48 @@ Data와 checkpoint, 원시 JSON은 Git에서 제외한다. `scripts/relaxation_p
 
 이 결과는 **DFT 경로의 네 내부 상태에 공동 감독을 걸면 모델이 학습하고, 직접 endpoint 대비 작은 이득이 나올 수 있다**는 소프트웨어·학습 PoC다. 원 [PDD](https://arxiv.org/html/2607.26004)의 student-state on-policy teacher 호출은 하지 않았다. 연속 DFT 프레임만으로 학생이 경로 밖에서 만든 상태의 DFT 다음 step을 알 수 없기 때문이다.
 
-추가로 실제 OC20 사전학습 MLIP force가 이 DFT-force oracle 결과를 유지하는지, 학생 proposal 후 같은 MLIP로 guard/refinement했을 때 조정된 FIRE/LBFGS보다 **성공률을 유지하면서 총 wall time이 짧아지는지** 검증해야 한다. 각 run에서 backbone/force/guard/refinement 호출을 전부 비용에 넣는다. 현재 계정의 `facebook/UMA` checkpoint 접근은 401 gated-access로 확인됐다. 아래 실험은 공개 legacy GemNet-OC checkpoint로 대체했다.
+추가로 실제 OC20 사전학습 MLIP force가 이 DFT-force oracle 결과를 유지하는지, 학생 proposal 후 같은 MLIP로 guard/refinement했을 때 LBFGS보다 **성공률과 최종 구조 품질을 유지하면서 총 wall time이 짧아지는지** 검증해야 한다. 각 run에서 backbone/force/guard/refinement 호출을 전부 비용에 넣는다. 현재 계정의 `facebook/UMA` checkpoint 접근은 401 gated-access로 확인됐다. 아래 실험은 공개 legacy GemNet-OC checkpoint로 대체했다.
 
 ## 실제 MLIP를 이용한 8계 CPU 진단
 
 [공식 GemNet-OC-S2EF-OC20-2M checkpoint](https://facebookresearch.github.io/fairchem/models-1/)를 사용했다. 다운로드 URL은 `https://dl.fbaipublicfiles.com/opencatalystproject/models/2022_07/s2ef/gemnet_oc_base_s2ef_2M.pt`, SHA-256은 `a63092b7cf3c42231a5b60e8fb3a33000849e07e8b787698c94e3c1fc76abeca`다. FAIR-Chem v1.10, PyTorch 2.4.1, SciPy 1.14.1을 별도 가상환경에 설치했고, macOS에서 필요한 PyG `torch-scatter`, `torch-sparse`, `torch-cluster`는 [공식 wheel 목록](https://data.pyg.org/whl/torch-2.4.1+cpu.html)에서 설치했다. GemNet-OC는 direct-force 모델이다. Energy 증가 0.1 eV 초과 또는 이동 1 Å 초과 시 제안을 거절하는 guard를 사용했다.
+
+### LBFGS 기준 재실험
+
+처음 FIRE를 기준으로 선택한 것은 잘못이었다. 같은 첫 8개 validation 계에서 ASE LBFGS(`maxstep=0.2 Å`, `memory=100`, `alpha=70`, line search 미사용)를 기준으로 다시 실행했다. 모든 방법은 동일 GemNet checkpoint, 시작 좌표, 고정 원자 제약, `fmax=0.05 eV/Å`, 최대 150 optimizer step을 사용한다. PDD 학생은 작은 새 backbone으로 학습했고, GemNet backbone을 복제한 모델이 아니다. 학생 제안에는 저장 DFT force가 아니라 **GemNet force**를 입력했다. 제안 입력, guard, refinement의 GemNet 평가를 모두 호출 수와 wall time에 포함했다. 모델 로딩은 제외했다.
+
+```bash
+MPLCONFIGDIR=data/oc20/cache/mpl XDG_CACHE_HOME=data/oc20/cache/xdg \
+  OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 \
+  .venv-oc20/bin/python scripts/relaxation_mlip_eval.py \
+  --data data/oc20/H_poc_1000 \
+  --checkpoint data/oc20/checkpoints/gemnet_oc_base_s2ef_2M.pt \
+  --multi-head runs/relaxation/H_1000_L4_3000_force_seed42_multi_head.pt \
+  --direct-endpoint runs/relaxation/H_1000_L4_3000_force_seed42_direct_endpoint.pt \
+  --output runs/relaxation/gemnet_lbfgs_8x150_one_block.json \
+  --systems 8 --max-steps 150 --fmax 0.05 --guard-ev 0.1 \
+  --proposal-blocks 1 --proposal-force-source mlip --optimizer lbfgs
+```
+
+| 방법 | 수렴 | 총 GemNet 호출 | 총 CPU wall time | LBFGS보다 호출 적은 계 | 최종 에너지 +0.05 eV 초과 |
+|---|---:|---:|---:|---:|---:|
+| LBFGS | 8/8 | 234 | 109.8 s | — | — |
+| 4-head 한 블록 + LBFGS | 8/8 | **207** | 99.8 s | 5/8 | 0/8 |
+| 직접 endpoint 한 번 + LBFGS | 8/8 | 213 | **97.7 s** | 6/8 | 0/8 |
+
+한 블록 PDD는 총 호출 수를 27회, 즉 11.5% 줄였다(호출 수 기준 1.13배). 측정 wall time은 1.10배 빨랐지만 CPU 실행 순서와 warmup 영향을 받을 수 있다. 직접 endpoint도 비슷한 수준이므로 이 결과만으로 다중 head의 독자적인 이득은 입증되지 않았다. PDD의 계별 호출 수는 baseline/PDD 순으로 `27/28`, `23/23`, `45/42`, `35/23`, `18/11`, `26/26`, `20/16`, `40/38`이다. PDD 최종 에너지의 LBFGS 대비 차이는 모두 ±0.02 eV 이내였다. 8계 단일 seed 진단이며, 같은 local minimum 및 DFT 구조 정확도를 보장하지 않는다.
+
+두 블록 연속 제안도 동일한 설정에서 `--proposal-blocks 2`로 측정했다. 두 번째 블록의 입력 force는 첫 번째 제안 구조에서 GemNet으로 다시 구한다. 총 비용에 이 평가와 guard 거절도 포함했다.
+
+| 방법 | 수렴 | 총 GemNet 호출 | 총 CPU wall time | LBFGS보다 호출 적은 계 | 최종 에너지 +0.05 eV 초과 |
+|---|---:|---:|---:|---:|---:|
+| LBFGS | 8/8 | 234 | 108.5 s | — | — |
+| 4-head 두 블록 + LBFGS | 8/8 | **198** | **93.4 s** | 6/8 | 0/8 |
+| 직접 endpoint 두 번 + LBFGS | 8/8 | 220 | 100.6 s | 5/8 | 0/8 |
+
+두 블록 PDD는 총 호출 수 15.4% 감소(1.18배), 측정 wall time 약 1.16배 단축이었다. PDD 제안 16개 중 14개를 받아들이고 2개를 guard에서 거절했다. 계별 호출 수는 baseline/PDD/direct 순으로 `27/30/39`, `23/21/25`, `45/44/45`, `35/19/25`, `18/11/11`, `26/20/22`, `20/13/14`, `40/40/39`였다. PDD의 최종 에너지는 baseline과 비교해 최대 +0.027 eV였고, 앞선 FIRE 두 블록에서 관찰한 +0.140 eV 다른-basin 사례는 이 LBFGS 설정에서는 재현되지 않았다. 그러나 흡착 원자의 DFT 끝 구조와의 오차는 계마다 증가하기도 했으며, 8계·단일 학습 seed·CPU 실험만으로 품질을 보존한 일반적 가속을 확립할 수 없다. 특히 단일 블록에서는 직접 endpoint와 PDD의 비용 차이가 작고 wall time 순서도 바뀐다. 더 큰 별도 검증집합에서 성공률·에너지·흡착 위치·시간 분포를 확인해야 한다.
+
+### 이전 FIRE 탐색 결과
 
 ```bash
 UV_CACHE_DIR=.uv-cache uv venv .venv-oc20 --python 3.11
@@ -61,7 +98,7 @@ MPLCONFIGDIR=data/oc20/cache/mpl XDG_CACHE_HOME=data/oc20/cache/xdg \
   --multi-head runs/relaxation/H_1000_L4_3000_force_seed42_multi_head.pt \
   --direct-endpoint runs/relaxation/H_1000_L4_3000_force_seed42_direct_endpoint.pt \
   --output runs/relaxation/gemnet_cpu_8x80.json \
-  --systems 8 --max-steps 80 --fmax 0.05 --guard-ev 0.1
+  --systems 8 --max-steps 80 --fmax 0.05 --guard-ev 0.1 --optimizer fire
 ```
 
 Hash split의 **첫 8개 validation 계**만 선택했다. 세 방법은 동일 GemNet checkpoint·시작 좌표·제약·FIRE 조건을 공유한다. 학생의 입력 force는 DFT가 아닌 **GemNet force**다. 제안 전 입력 force, proposal guard, optimizer 전 과정의 GemNet 호출과 wall time을 센다. 동일 모델 로딩 시간은 제외한다.
