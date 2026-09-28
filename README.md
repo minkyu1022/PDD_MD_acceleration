@@ -4,6 +4,8 @@ An executable experiment adapting [Parallel Decoding Distillation](https://arxiv
 
 **Continuing on a GPU server?** Start with the [server experiment guide](docs/SERVER_EXPERIMENT_GUIDE.md). It states what currently runs on one GPU, what must be implemented for four-GPU training, the same-potential commands, data/model access, validation policy, baselines, metrics, and decision gates.
 
+**Considering relaxation instead of MD?** The [OC20 relaxation research note](docs/RELAXATION_RESEARCH_NOTE.md) covers data size and access, the MLIP teacher definition, model choices, fair baselines, metrics, and a four-GPU pilot.
+
 ## What this experiment tests
 
 We test whether a student can replace (L) evaluations of a deterministic fine-step teacher with one evaluation while following its short trajectory. Let (z=(q,v)), with (q) in Å and (v) in Å/ps. The teacher map (Phi_h(z)) is an OpenMM velocity-Verlet step of (h=0.0005) ps by default. The student returns (L) predictions ((\bar{\dot q}_k,\bar{\dot v}_k)) from the *same initial state* and a single shared eSEN backbone evaluation. Its internal states are cumulative sums of those predictions. At training time, we select a random internal step (k), evaluate the teacher map at the **student-produced state** with stop-gradient, and regress the corresponding head toward
