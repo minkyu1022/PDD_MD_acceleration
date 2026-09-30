@@ -64,13 +64,13 @@ def main() -> None:
             energy_delta = np.asarray([row["final_energy_ev"] - ref["final_energy_ev"] for row, ref in quality_pairs])
             ads_error_delta = np.asarray([row["final_dft_adsorbate_mae_A"] - ref["final_dft_adsorbate_mae_A"] for row, ref in quality_pairs])
             boot_saving = 1 - calls[samples].sum(axis=1) / baseline_calls[samples].sum(axis=1)
-            boot_wall_saving = 1 - wall[samples].sum(axis=1) / baseline_wall[samples].sum(axis=1)
+            boot_wall_saving = 1 - wall[samples].sum(axis=1) / baseline_wall[samples].sum(axis=1) if not args.baseline_from else None
             result.update(
                 fewer_calls=int(np.sum(calls < baseline_calls)),
                 call_saving_fraction=round(float(1 - calls.sum() / baseline_calls.sum()), 4),
                 call_saving_95ci=[round(float(v), 4) for v in np.quantile(boot_saving, [0.025, 0.975])],
-                wall_saving_fraction=round(float(1 - wall.sum() / baseline_wall.sum()), 4),
-                wall_saving_95ci=[round(float(v), 4) for v in np.quantile(boot_wall_saving, [0.025, 0.975])],
+                wall_saving_fraction=round(float(1 - wall.sum() / baseline_wall.sum()), 4) if not args.baseline_from else None,
+                wall_saving_95ci=[round(float(v), 4) for v in np.quantile(boot_wall_saving, [0.025, 0.975])] if boot_wall_saving is not None else None,
                 quality_pairs=len(quality_pairs),
                 energy_plus_0_05_ev=int(np.sum(energy_delta > 0.05)),
                 energy_plus_0_10_ev=int(np.sum(energy_delta > 0.10)),

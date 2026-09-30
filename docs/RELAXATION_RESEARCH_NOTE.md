@@ -79,3 +79,7 @@ OMol eSEN 체크포인트를 OC20 슬랩에 그대로 적용하지 않는다. �
 ## 실행된 첫 PoC
 
 [OC20 `*H` PoC 결과](../results/relaxation_oc20_poc_2026-09-28.md)는 공식 궤적 1,000개를 사용해 DFT 경로의 4-step 내부 좌표를 다중 head가 예측할 수 있는지 시험한다. 먼저 저장된 **DFT force**를 MLIP force의 대용 입력으로 학습했고, 뒤이어 공개 GemNet-OC-2M force로 8개 계의 실제 MLIP refinement를 실행했다. 처음에는 FIRE를 기준으로 썼으나, LBFGS로 다시 측정한 한 블록 실험에서 GemNet 호출이 기준 234회, PDD+LBFGS 207회, 직접 endpoint+LBFGS 213회였다. 두 블록에서는 각각 234/198/220회였고, 모든 방법이 8/8 수렴했다. 이 작은 CPU 표본만으로 견고한 가속이나 다중 head의 독자적인 이득을 입증할 수 없다. 학생은 작은 새 backbone이며 원 PDD의 student-state on-policy target과 pretrained GemNet head 복제는 아직 적용하지 않았다.
+
+[별도 100계 LBFGS 평가](../results/relaxation_oc20_holdout_2026-09-30.md)에서는 기준이 100/100 수렴·4,377회 GemNet 호출, PDD 두 블록이 98/100 수렴·4,302회, 직접 endpoint 두 번이 98/100 수렴·4,123회였다. PDD의 총 호출 절감은 1.7%에 그쳤고 계 단위 bootstrap 구간은 0을 포함했다. PDD 수렴 계 중 10계는 기준보다 최종 에너지가 0.05 eV 넘게 높았고 7계는 DFT 흡착 위치 오차가 0.2 Å 넘게 증가했다. **현재 구현으로 품질을 유지한 relaxation 가속을 주장할 수 없다.** 이 후속 평가는 아직 `*H` 아카이브의 작은 validation subset이며 공식 OC20 ID/OOD 검증은 아니다.
+
+같은 100계에서 사후 탐색한 **한 블록** PDD는 99/100 수렴·4,251회 호출이었다. 에너지 +0.05 eV 초과 계는 7개, 흡착 위치 오차 +0.2 Å 초과 계는 7개였다. 두 번째 제안을 생략하면 일부 실패는 완화됐으나, 첫 제안에서 다른 구조로 이동하는 사례와 직접 endpoint 대비 불분명한 다중 head 이득은 남았다. 기준 wall time은 앞선 실행에서 재사용했으므로 한 블록의 wall time 가속 배수는 보고하지 않는다.
