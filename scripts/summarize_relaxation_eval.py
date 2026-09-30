@@ -12,12 +12,20 @@ import numpy as np
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("input", type=Path)
+    parser.add_argument("--baseline-from", type=Path, help="Reuse baseline rows from another evaluation on the same systems")
     parser.add_argument("--bootstrap", type=int, default=10_000)
     args = parser.parse_args()
 
     payload = json.loads(args.input.read_text())
     grouped: dict[str, dict[str, dict]] = {}
-    for row in payload["rows"]:
+    baseline_rows = []
+    if args.baseline_from:
+        reference = json.loads(args.baseline_from.read_text())
+        for key in ("data", "checkpoint", "skip_systems", "systems", "fmax", "max_steps", "optimizer", "lbfgs_maxstep", "lbfgs_memory", "lbfgs_alpha"):
+            if reference["config"][key] != payload["config"][key]:
+                raise ValueError(f"Cannot reuse baseline with changed {key}")
+        baseline_rows = [row for row in reference["rows"] if row["method"] == reference["config"]["optimizer"].upper()]
+    for row in [*baseline_rows, *payload["rows"]]:
         methods = grouped.setdefault(row["sid"], {})
         if row["method"] in methods:
             raise ValueError(f"Duplicate result: {row['sid']} {row['method']}")

@@ -151,6 +151,7 @@ def main():
     parser.add_argument("--systems", type=int, default=8)
     parser.add_argument("--skip-systems", type=int, default=0, help="Skip this many validation systems before selecting the evaluation set")
     parser.add_argument("--resume", action="store_true", help="Continue an interrupted run from the output JSON")
+    parser.add_argument("--methods", nargs="+", choices=("baseline", "pdd", "direct"), default=["baseline", "pdd", "direct"])
     parser.add_argument("--fmax", type=float, default=0.05)
     parser.add_argument("--max-steps", type=int, default=150)
     parser.add_argument("--guard-ev", type=float, default=0.1)
@@ -169,7 +170,12 @@ def main():
     if len(selected) < args.systems:
         raise ValueError("Not enough validation systems")
     label = args.optimizer.upper()
-    models = {label: None, f"PDD4+{label}": load_student(args.multi_head), f"direct4+{label}": load_student(args.direct_endpoint)}
+    all_models = {
+        "baseline": (label, None),
+        "pdd": (f"PDD4+{label}", args.multi_head),
+        "direct": (f"direct4+{label}", args.direct_endpoint),
+    }
+    models = {all_models[key][0]: load_student(all_models[key][1]) if all_models[key][1] else None for key in args.methods}
     underlying = OCPCalculator(checkpoint_path=args.checkpoint, cpu=True, seed=42)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)

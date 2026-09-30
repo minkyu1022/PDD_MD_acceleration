@@ -31,6 +31,43 @@ MPLCONFIGDIR=data/oc20/cache/mpl XDG_CACHE_HOME=data/oc20/cache/xdg \
 
 원시 JSON과 checkpoint는 Git에서 제외한다. 실행 중 매 method 결과를 원자적으로 JSON에 저장하며 `--resume`으로 같은 설정을 이어갈 수 있다.
 
-## 결과
+## 100계 두 블록 결과
 
-진행 중.
+100계 × 3방법의 **300개 실행이 모두 완료**됐다. CPU 실험의 측정 wall time 합계이며 모델 로딩은 제외한다.
+
+| 방법 | `fmax < 0.05` 수렴 | GemNet 호출 합계 | wall time 합계 | LBFGS보다 호출 적은 계 | 기준보다 에너지 +0.05 eV 초과 | DFT 흡착 원자 오차 +0.20 Å 초과 |
+|---|---:|---:|---:|---:|---:|---:|
+| LBFGS | **100/100** | 4,377 | 2,450.6 s | — | — | — |
+| PDD 4-head 두 블록 + LBFGS | **98/100** | 4,302 | 2,375.9 s | 65/100 | 10/98 | 7/98 |
+| 직접 endpoint 두 번 + LBFGS | **98/100** | **4,123** | **2,371.6 s** | 64/100 | 8/98 | 7/98 |
+
+PDD는 총 호출 수를 **1.7%** 줄였지만, 계 단위 paired bootstrap 95% 구간은 **-8.2%에서 +10.1%**다. 측정 wall time 절감률은 **3.0%**이고 같은 방식의 구간은 **-6.3%에서 +11.3%**다. 직접 endpoint는 호출 수 **5.8%**, wall time **3.2%** 절감했다. 두 방법 모두 기준 LBFGS의 100/100 수렴률을 유지하지 못했다. PDD와 직접 endpoint의 wall time 합계 차이는 4.3초로, 약 2,400초 규모에서 다중 head의 계산상 우위를 뒷받침하지 않는다.
+
+PDD는 65계에서 호출 수가 줄었고 8계는 같으며 27계에서는 늘었다. 증가가 큰 계의 초과 호출은 `random1138188` +102회, `random2275030` +94회, `random1408921` +76회다. 이 세 계가 소수 실패의 비용 위험을 보여준다. PDD의 최대 최종 에너지 악화는 **+3.819 eV**였고, DFT 최종 흡착 위치 오차의 최대 증가는 **+2.896 Å**였다. 최종 에너지가 오히려 낮으면서 흡착 위치 오차가 2 Å 이상 커진 계도 있어 energy guard만으로 구조 품질을 판정할 수 없다. PDD 블록 제안 200개 중 185개를 받아들였고 13계에서 제안을 거절했다. 거절 횟수는 계별 boolean으로 기록되어 있으므로 여러 제안 거절 횟수와 동일하지 않다.
+
+**판정:** 이 100계 평가에서는 품질을 유지하는 PDD relaxation 가속이 입증되지 않았다. 8계 pilot의 큰 이득이 대표적이지 않았고, 다중 head가 직접 endpoint를 안정적으로 이기지 못했다. 특히 GemNet은 direct-force 모델이라 energy와 force가 엄밀하게 보존 관계에 있다는 보장은 없다. `fmax` 수렴과 에너지·흡착 구조를 함께 평가해야 한다. 이 결론은 OC20 `*H`의 작은 동일 아카이브 계에 한정되며, 다른 adsorbate나 공식 OOD로 일반화하지 않는다.
+
+실행 원시값은 로컬 `runs/relaxation/gemnet_lbfgs_holdout100_two_blocks.json`에 남겼다. 이를 사용해 위 표와 paired bootstrap 구간을 `scripts/summarize_relaxation_eval.py`로 재생성할 수 있다. 큰 checkpoint와 원시 JSON은 Git에 올리지 않는다.
+
+## 탐색적 한 블록 ablation
+
+두 블록 결과에서 비수렴과 큰 구조 오차가 드러난 **뒤에** 같은 100계의 한 블록만 시험하기로 했다. 따라서 이는 위 100계의 독립 확증 결과가 아니라 사후 원인 탐색이다. 학생 checkpoint, MLIP, guard, LBFGS 설정을 바꾸지 않고 `--proposal-blocks 1`을 적용한다. 동일 시작점의 LBFGS baseline은 위 원시 JSON의 100개 결과를 그대로 재사용한다.
+
+```bash
+MPLCONFIGDIR=data/oc20/cache/mpl XDG_CACHE_HOME=data/oc20/cache/xdg \
+  OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 \
+  .venv-oc20/bin/python scripts/relaxation_mlip_eval.py \
+  --data data/oc20/H_poc_1000 \
+  --checkpoint data/oc20/checkpoints/gemnet_oc_base_s2ef_2M.pt \
+  --multi-head runs/relaxation/H_1000_L4_3000_force_seed42_multi_head.pt \
+  --direct-endpoint runs/relaxation/H_1000_L4_3000_force_seed42_direct_endpoint.pt \
+  --output runs/relaxation/gemnet_lbfgs_holdout100_one_block.json \
+  --skip-systems 8 --systems 100 --max-steps 150 --fmax 0.05 \
+  --guard-ev 0.1 --proposal-blocks 1 --proposal-force-source mlip \
+  --optimizer lbfgs --methods pdd direct
+.venv/bin/python scripts/summarize_relaxation_eval.py \
+  runs/relaxation/gemnet_lbfgs_holdout100_one_block.json \
+  --baseline-from runs/relaxation/gemnet_lbfgs_holdout100_two_blocks.json
+```
+
+한 블록 결과는 진행 중이다.
