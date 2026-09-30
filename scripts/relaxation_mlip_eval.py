@@ -149,6 +149,8 @@ def main():
     parser.add_argument("--direct-endpoint", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--systems", type=int, default=8)
+    parser.add_argument("--skip-systems", type=int, default=0, help="Skip this many validation systems before selecting the evaluation set")
+    parser.add_argument("--resume", action="store_true", help="Continue an interrupted run from the output JSON")
     parser.add_argument("--fmax", type=float, default=0.05)
     parser.add_argument("--max-steps", type=int, default=150)
     parser.add_argument("--guard-ev", type=float, default=0.1)
@@ -163,7 +165,7 @@ def main():
     torch.set_num_threads(args.threads)
     root = Path(args.data)
     manifest = json.loads((root / "manifest.json").read_text())
-    selected = [e for e in manifest["systems"] if e["split"] == "validation"][: args.systems]
+    selected = [e for e in manifest["systems"] if e["split"] == "validation"][args.skip_systems : args.skip_systems + args.systems]
     if len(selected) < args.systems:
         raise ValueError("Not enough validation systems")
     label = args.optimizer.upper()
@@ -172,8 +174,17 @@ def main():
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     rows = []
+    if args.resume and output.exists():
+        previous = json.loads(output.read_text())
+        for key, value in vars(args).items():
+            if key != "resume" and previous["config"].get(key) != value:
+                raise ValueError(f"Cannot resume with changed {key}")
+        rows = previous["rows"]
+    done = {(row["sid"], row["method"]) for row in rows}
     for entry in selected:
         for name, model in models.items():
+            if (entry["sid"], name) in done:
+                continue
             result = run_method(entry, root, underlying, name, model, args.fmax, args.max_steps, args.guard_ev, args.proposal_blocks, args.proposal_force_source, args.optimizer, args.lbfgs_maxstep, args.lbfgs_memory, args.lbfgs_alpha)
             rows.append(result)
             print(json.dumps(result), flush=True)
